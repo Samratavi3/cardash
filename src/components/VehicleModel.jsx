@@ -1154,46 +1154,4 @@ export default function VehicleModel() {
         <meshStandardMaterial color="#cccccc" metalness={0.92} roughness={0.08} />
       </mesh>
       {/* Front-right door handle */}
-      <mesh position={[-0.895, 1.05, 0.12]} castShadow>
-        <boxGeometry args={[0.012, 0.04, 0.16]} />
-        <meshStandardMaterial color="#cccccc" metalness={0.92} roughness={0.08} />
-      </mesh>
-      {/* Rear-left door handle */}
-      <mesh position={[0.895, 1.05, -0.52]} castShadow>
-        <boxGeometry args={[0.012, 0.04, 0.16]} />
-        <meshStandardMaterial color="#cccccc" metalness={0.92} roughness={0.08} />
-      </mesh>
-      {/* Rear-right door handle */}
-      <mesh position={[-0.895, 1.05, -0.52]} castShadow>
-        <boxGeometry args={[0.012, 0.04, 0.16]} />
-        <meshStandardMaterial color="#cccccc" metalness={0.92} roughness={0.08} />
-      </mesh>
-
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* FRONT TURN SIGNALS — amber strip inside headlight cluster             */}
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      <mesh name="turnsignal_fl" position={[0.69, 0.91, 1.955]} castShadow>
-        <boxGeometry args={[0.30, 0.04, 0.09]} />
-        <meshPhysicalMaterial color="#ff8c00" emissive="#ff6000" emissiveIntensity={0}
-          metalness={0.1} roughness={0.2} toneMapped={false} />
-      </mesh>
-      <mesh name="turnsignal_fr" position={[-0.69, 0.91, 1.955]} castShadow>
-        <boxGeometry args={[0.30, 0.04, 0.09]} />
-        <meshPhysicalMaterial color="#ff8c00" emissive="#ff6000" emissiveIntensity={0}
-          metalness={0.1} roughness={0.2} toneMapped={false} />
-      </mesh>
-      {/* Rear turn signals — amber strip directly below taillight cluster */}
-      <mesh name="turnsignal_rl" position={[0.66, 0.89, -1.955]} castShadow>
-        <boxGeometry args={[0.28, 0.04, 0.08]} />
-        <meshPhysicalMaterial color="#ff8c00" emissive="#ff6000" emissiveIntensity={0}
-          metalness={0.1} roughness={0.2} toneMapped={false} />
-      </mesh>
-      <mesh name="turnsignal_rr" position={[-0.66, 0.89, -1.955]} castShadow>
-        <boxGeometry args={[0.28, 0.04, 0.08]} />
-        <meshPhysicalMaterial color="#ff8c00" emissive="#ff6000" emissiveIntensity={0}
-          metalness={0.1} roughness={0.2} toneMapped={false} />
-      </mesh>
-
-    </group>
-  );
-}
+      <mesh position={[-0.895, 1.05, 0.
