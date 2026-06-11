@@ -96,4 +96,50 @@ export const CAMERA_POSITIONS = {
     target: [0, 1.26, 0.48],
     fov: 75,
   },
-  // 360° cabin panorama — camera at 
+  // 360° cabin panorama — camera at eye height near cabin centre
+  cabin_360: {
+    position: [0, 1.30, -0.12],
+    target:   [0, 1.30, -0.11],
+    fov: 90,
+  },
+  ac_vent: {
+    position: [-0.15, 1.22, 0.10],
+    target: [0.10, 1.24, 0.54],
+    fov: 55,
+  },
+  seat_driver: {
+    position: [0.80, 1.20, -0.55],
+    target: [-0.38, 0.83, -0.14],
+    fov: 52,
+  },
+  seat_passenger: {
+    position: [-0.80, 1.20, -0.55],
+    target: [0.38, 0.83, -0.14],
+    fov: 52,
+  },
+  steering: {
+    position: [-0.15, 1.30, -0.38],
+    target: [-0.37, 1.28, 0.31],
+    fov: 48,
+  },
+  infotainment: {
+    position: [0.10, 1.30, -0.20],
+    target: [0.10, 1.20, 0.54],
+    fov: 45,
+  },
+  ambient: {
+    position: [0.50, 1.12, -0.35],
+    target: [0.10, 0.98, 0.10],
+    fov: 60,
+  },
+  instrument: {
+    position: [-0.35, 1.42, -0.50],
+    target: [-0.365, 1.28, 0.43],
+    fov: 42,
+  },
+  overhead: {
+    position: [0, 1.68, -0.45],
+    target: [0, 1.47, -0.18],
+    fov: 55,
+  },
+}

@@ -1161,4 +1161,52 @@ export default function VehicleModel() {
       </mesh>
       <mesh position={[0.25, 0.66, -1.92]} rotation={[Math.PI / 2, 0, 0]} castShadow>
         <torusGeometry args={[0.045, 0.006, 8, 24]} />
-        <meshStandardMaterial 
+        <meshStandardMaterial color="#555" metalness={0.9} roughness={0.1} />
+      </mesh>
+
+      {/* ════════════════════════════════════════════════════════════════════ */}
+      {/* LICENSE PLATES — front and rear                                      */}
+      {/* ════════════════════════════════════════════════════════════════════ */}
+      {/* Plates sit ON the bumper faces (±2.005), not buried inside them */}
+      <mesh position={[0, 0.80, 2.012]} castShadow>
+        <boxGeometry args={[0.38, 0.13, 0.01]} />
+        <meshStandardMaterial color="#f5f5f0" metalness={0.05} roughness={0.7} />
+      </mesh>
+      <mesh position={[0, 0.80, -2.012]} castShadow>
+        <boxGeometry args={[0.38, 0.13, 0.01]} />
+        <meshStandardMaterial color="#f5f5f0" metalness={0.05} roughness={0.7} />
+      </mesh>
+
+      {/* ════════════════════════════════════════════════════════════════════ */}
+      {/* DOOR HANDLES — slim recessed chrome strip on each door               */}
+      {/* ════════════════════════════════════════════════════════════════════ */}
+      {/* Door handles moved into the door groups — they must swing with the doors */}
+
+      {/* ════════════════════════════════════════════════════════════════════ */}
+      {/* FRONT TURN SIGNALS — amber strip inside headlight cluster             */}
+      {/* ════════════════════════════════════════════════════════════════════ */}
+      <mesh name="turnsignal_fl" position={[0.69, 0.91, 1.955]} castShadow>
+        <boxGeometry args={[0.30, 0.04, 0.09]} />
+        <meshPhysicalMaterial color="#ff8c00" emissive="#ff6000" emissiveIntensity={0}
+          metalness={0.1} roughness={0.2} toneMapped={false} />
+      </mesh>
+      <mesh name="turnsignal_fr" position={[-0.69, 0.91, 1.955]} castShadow>
+        <boxGeometry args={[0.30, 0.04, 0.09]} />
+        <meshPhysicalMaterial color="#ff8c00" emissive="#ff6000" emissiveIntensity={0}
+          metalness={0.1} roughness={0.2} toneMapped={false} />
+      </mesh>
+      {/* Rear turn signals — amber strip directly below taillight cluster */}
+      <mesh name="turnsignal_rl" position={[0.66, 0.89, -1.955]} castShadow>
+        <boxGeometry args={[0.28, 0.04, 0.08]} />
+        <meshPhysicalMaterial color="#ff8c00" emissive="#ff6000" emissiveIntensity={0}
+          metalness={0.1} roughness={0.2} toneMapped={false} />
+      </mesh>
+      <mesh name="turnsignal_rr" position={[-0.66, 0.89, -1.955]} castShadow>
+        <boxGeometry args={[0.28, 0.04, 0.08]} />
+        <meshPhysicalMaterial color="#ff8c00" emissive="#ff6000" emissiveIntensity={0}
+          metalness={0.1} roughness={0.2} toneMapped={false} />
+      </mesh>
+
+    </group>
+  );
+}

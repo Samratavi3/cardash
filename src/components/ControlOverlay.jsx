@@ -882,4 +882,14 @@ export default function ControlOverlay() {
                 </button>
               </div>
 
-              {/* Scrollab
+              {/* Scrollable content */}
+              <div className="flex-1 overflow-y-auto scrollbar-none px-4 py-3">
+                <CardComp />
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
