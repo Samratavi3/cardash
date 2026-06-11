@@ -13,64 +13,78 @@ export const CAMERA_POSITIONS = {
   },
 
   // --- Exterior hotspots ---
+  // Car axes: +z = nose, +x = LEFT side. Targets = actual mesh world positions.
   headlight: {
-    position: [3.0, 1.1, 2.6],
-    target: [2.1, 0.75, 0.75],
+    position: [2.6, 1.4, 3.4],
+    target: [0.69, 1.0, 1.95],       // headlight_l cluster
     fov: 35,
   },
   adas: {
-    position: [1.2, 2.6, 2.8],
-    target: [0.3, 1.55, 1.6],
+    position: [1.2, 2.4, 2.6],
+    target: [0, 1.54, 0.62],         // ADAS camera at windshield top
     fov: 32,
   },
   wiper: {
-    position: [1.8, 2.4, 2.4],
-    target: [0.2, 1.35, 1.5],
+    position: [1.6, 2.2, 2.6],
+    target: [0, 1.25, 0.85],         // wiper pivots on windshield base
     fov: 36,
   },
   mirror_left: {
-    position: [-1.0, 1.5, 3.8],
-    target: [-1.1, 1.05, 0.88],
-    fov: 28,
+    position: [2.4, 1.5, 2.1],
+    target: [0.93, 1.23, 0.46],      // left mirror pod at window line
+    fov: 30,
   },
   mirror_right: {
-    position: [3.5, 1.5, 0.5],
-    target: [1.1, 1.05, -0.88],
-    fov: 28,
+    position: [-2.4, 1.5, 2.1],
+    target: [-0.93, 1.23, 0.46],     // right mirror pod
+    fov: 30,
+  },
+  // Driver's-eye views for D-pad glass adjustment — over the shoulder at the
+  // window line, looking forward at the rear-facing glass so tilt is visible.
+  // NOTE: CameraControls minDistance=1.8 clamps anything closer; keep dist ≥ 1.8.
+  mirror_left_adjust: {
+    position: [1.7, 1.45, -1.2],
+    target: [0.95, 1.23, 0.46],
+    fov: 35,
+  },
+  mirror_right_adjust: {
+    position: [-1.7, 1.45, -1.2],
+    target: [-0.95, 1.23, 0.46],
+    fov: 35,
   },
   bumper: {
-    position: [0, 0.75, 4.8],
-    target: [0, 0.44, 2.5],
+    position: [0, 1.0, 4.6],
+    target: [0, 0.80, 2.0],          // front bumper face
     fov: 38,
   },
   foglight: {
-    position: [3.5, 0.75, 2.5],
-    target: [2.0, 0.38, 0.7],
+    position: [2.2, 0.9, 3.4],
+    target: [0.62, 0.70, 1.96],      // foglight_l in lower bumper
     fov: 32,
   },
   sunroof: {
     position: [0.1, 4.8, 1.8],
-    target: [0.1, 1.52, 0],
+    target: [0.1, 1.62, -0.2],       // panoramic roof centre
     fov: 40,
   },
   door: {
     position: [3.8, 1.6, 3.2],
-    target: [0.2, 0.75, 0.6],
+    target: [0.84, 0.95, 0.2],       // left door pair
     fov: 45,
   },
   taillight: {
-    position: [-3.2, 1.1, -2.5],
-    target:   [-2.1, 0.72, -0.7],
+    position: [-2.6, 1.4, -3.4],
+    target:   [-0.66, 0.98, -1.96],  // taillight_r cluster
     fov: 35,
   },
   bonnet: {
     position: [0, 2.4, 3.8],
-    target: [0, 0.95, 1.3],
+    target: [0, 1.14, 1.3],          // hood deck (raised to shoulder line)
     fov: 38,
   },
   boot: {
     position: [0, 2.4, -3.8],
-    target: [0, 0.95, -1.4],
+    target: [0, 1.1, -1.4],          // trunk deck
     fov: 38,
   },
 
@@ -82,50 +96,4 @@ export const CAMERA_POSITIONS = {
     target: [0, 1.26, 0.48],
     fov: 75,
   },
-  // 360° cabin panorama — camera at eye height near cabin centre
-  cabin_360: {
-    position: [0, 1.30, -0.12],
-    target:   [0, 1.30, -0.11],
-    fov: 90,
-  },
-  ac_vent: {
-    position: [-0.15, 1.22, 0.10],
-    target: [0.10, 1.24, 0.54],
-    fov: 55,
-  },
-  seat_driver: {
-    position: [0.80, 1.20, -0.55],
-    target: [-0.38, 0.83, -0.14],
-    fov: 52,
-  },
-  seat_passenger: {
-    position: [-0.80, 1.20, -0.55],
-    target: [0.38, 0.83, -0.14],
-    fov: 52,
-  },
-  steering: {
-    position: [-0.15, 1.30, -0.38],
-    target: [-0.37, 1.28, 0.31],
-    fov: 48,
-  },
-  infotainment: {
-    position: [0.10, 1.30, -0.20],
-    target: [0.10, 1.20, 0.54],
-    fov: 45,
-  },
-  ambient: {
-    position: [0.50, 1.12, -0.35],
-    target: [0.10, 0.98, 0.10],
-    fov: 60,
-  },
-  instrument: {
-    position: [-0.35, 1.42, -0.50],
-    target: [-0.365, 1.28, 0.43],
-    fov: 42,
-  },
-  overhead: {
-    position: [0, 1.68, -0.45],
-    target: [0, 1.47, -0.18],
-    fov: 55,
-  },
-}
+  // 360° cabin panorama — camera at 

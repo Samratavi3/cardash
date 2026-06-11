@@ -8,7 +8,7 @@ import {
 } from 'lucide-react'
 import { useCarState } from '../hooks/useCarState'
 import { HOTSPOT_META } from '../constants/hotspots'
-import { resetCamera } from '../hooks/useCameraRig'
+import { resetCamera, flyTo } from '../hooks/useCameraRig'
 import { useSoundFX } from '../hooks/useSoundFX'
 
 // ── Shared UI primitives ──────────────────────────────────────────────────────
@@ -242,9 +242,13 @@ function MirrorCard({ hotspot }) {
   const handleFoldToggle = (newState) => {
     setFold(newState)
     triggerAnimation(hotspot, newState)
+    // Fold is an exterior operation — make sure the camera is outside watching the pod swing
+    flyTo(hotspot)
   }
 
   const handleDPad = (dir) => {
+    // Glass adjustment is judged from the driver's seat — move inside on first nudge
+    flyTo(`${hotspot}_adjust`)
     if (dir === 'up')    nudgeMirrorTilt(side, 'x', -STEP)
     if (dir === 'down')  nudgeMirrorTilt(side, 'x',  STEP)
     if (dir === 'left')  nudgeMirrorTilt(side, 'y', isLeft ? -STEP :  STEP)
@@ -878,14 +882,4 @@ export default function ControlOverlay() {
                 </button>
               </div>
 
-              {/* Scrollable content */}
-              <div className="flex-1 overflow-y-auto scrollbar-none px-4 py-3">
-                <CardComp />
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  )
-}
+              {/* Scrollab

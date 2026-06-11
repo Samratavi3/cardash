@@ -230,15 +230,17 @@ export default function VehicleModel() {
       if (mesh.material) mesh.material.opacity = 0.38 * (1 - s[name] / 100);
     });
 
-    // Mirrors — Y-axis rotation: deployed=0 (stalk straight out, max extension),
-    //   folded left=-PI/2, right=+PI/2 (pod sweeps rearward, hugs door panel)
+    // Mirrors — Y-axis rotation: deployed=0 (stalk straight out, max extension).
+    // Fold sweeps the pod REARWARD against the door: for a +x (left) pod that is
+    // +rotation.y (x→−z); for the −x (right) pod it is −rotation.y. 75° (π/2.4)
+    // keeps the pod proud of the door skin instead of sinking into it at 90°.
     if (c.mirror_left) {
-      const target = s.mirror_left ? -Math.PI / 2 : 0;
+      const target = s.mirror_left ? Math.PI / 2.4 : 0;
       t.mirror_left += (target - t.mirror_left) * SPEED;
       c.mirror_left.rotation.y = t.mirror_left;
     }
     if (c.mirror_right) {
-      const target = s.mirror_right ? Math.PI / 2 : 0;
+      const target = s.mirror_right ? -Math.PI / 2.4 : 0;
       t.mirror_right += (target - t.mirror_right) * SPEED;
       c.mirror_right.rotation.y = t.mirror_right;
     }
@@ -692,7 +694,7 @@ export default function VehicleModel() {
           <boxGeometry args={[0.012, 0.04, 0.16]} />
           <meshStandardMaterial color="#cccccc" metalness={0.92} roughness={0.08} />
         </mesh>
-        {/* LEFT MIRROR — at window line (world y≈1.23); rotation.y=0 deployed, -PI/2 folded */}
+        {/* LEFT MIRROR — at window line (world y≈1.23); rotation.y=0 deployed, +75° folded rearward */}
         <group name="mirror_left" position={[0.042, 0.33, -0.03]}>
           {/* Stalk arm — body colour, 9 cm long outward */}
           <mesh position={[0.048, 0, 0]} castShadow receiveShadow>
@@ -749,7 +751,7 @@ export default function VehicleModel() {
           <boxGeometry args={[0.012, 0.04, 0.16]} />
           <meshStandardMaterial color="#cccccc" metalness={0.92} roughness={0.08} />
         </mesh>
-        {/* RIGHT MIRROR — at window line (world y≈1.23); rotation.y=0 deployed, +PI/2 folded */}
+        {/* RIGHT MIRROR — at window line (world y≈1.23); rotation.y=0 deployed, −75° folded rearward */}
         <group name="mirror_right" position={[-0.042, 0.33, -0.03]}>
           {/* Stalk arm */}
           <mesh position={[-0.048, 0, 0]} castShadow receiveShadow>
@@ -1159,7 +1161,4 @@ export default function VehicleModel() {
       </mesh>
       <mesh position={[0.25, 0.66, -1.92]} rotation={[Math.PI / 2, 0, 0]} castShadow>
         <torusGeometry args={[0.045, 0.006, 8, 24]} />
-        <meshStandardMaterial color="#555" metalness={0.9} roughness={0.1} />
-      </mesh>
-
-      {/* ═════════════════════════════════════════�
+        <meshStandardMaterial 
