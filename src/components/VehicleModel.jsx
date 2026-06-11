@@ -532,16 +532,22 @@ export default function VehicleModel() {
       {/* trunk-deck level. Single mesh per zone eliminates z-fighting bands.  */}
       {/* ════════════════════════════════════════════════════════════════════ */}
 
-      {/* Cabin side panels — BELTLINE ONLY y=0.60→1.18, recessed 5mm behind door
-          faces so the greenhouse (1.18→1.47) stays open and door glass is visible */}
-      <mesh position={[ 0.825, 0.90, -0.145]} castShadow receiveShadow>
-        <boxGeometry args={[0.05, 0.60, 1.51]} />
-        <meshPhysicalMaterial color={selectedColor.hex} metalness={bodyMetal} roughness={bodyRough} clearcoat={bodyClearcoat} />
-      </mesh>
-      <mesh position={[-0.825, 0.90, -0.145]} castShadow receiveShadow>
-        <boxGeometry args={[0.05, 0.60, 1.51]} />
-        <meshPhysicalMaterial color={selectedColor.hex} metalness={bodyMetal} roughness={bodyRough} clearcoat={bodyClearcoat} />
-      </mesh>
+      {/* Cabin side corner fillers — ONLY outside the door apertures so the
+          interior is visible when doors open. Front: door hinge edge (z=0.50)
+          to fender (z=0.61). Rear: rear-door edge (z=−0.80) to quarter (z=−0.90).
+          The door-gap zone (z −0.32→−0.04) is closed by the lower B-pillar. */}
+      {[0.825, -0.825].map((x) => (
+        <group key={`sidefill-${x}`}>
+          <mesh position={[x, 0.90, 0.555]} castShadow receiveShadow>
+            <boxGeometry args={[0.05, 0.60, 0.11]} />
+            <meshPhysicalMaterial color={selectedColor.hex} metalness={bodyMetal} roughness={bodyRough} clearcoat={bodyClearcoat} />
+          </mesh>
+          <mesh position={[x, 0.90, -0.85]} castShadow receiveShadow>
+            <boxGeometry args={[0.05, 0.60, 0.10]} />
+            <meshPhysicalMaterial color={selectedColor.hex} metalness={bodyMetal} roughness={bodyRough} clearcoat={bodyClearcoat} />
+          </mesh>
+        </group>
+      ))}
 
       {/* Side sills */}
       <mesh position={[ 0.75, 0.65, 0]} castShadow receiveShadow>
@@ -675,8 +681,19 @@ export default function VehicleModel() {
           <boxGeometry args={[0.08, 0.06, 0.60]} />
           <meshStandardMaterial color="#333" metalness={0.8} roughness={0.2} />
         </mesh>
-        {/* LEFT MIRROR — pivot at door face; rotation.y=0 deployed (out), -PI/2 folded (rear) */}
-        <group name="mirror_left" position={[0.042, 0.17, -0.03]}>
+        {/* Ambient strip — inner face, swings with the door */}
+        <mesh name="ambient_door_fl" position={[-0.046, 0.10, -0.32]}>
+          <boxGeometry args={[0.012, 0.04, 0.50]} />
+          <meshStandardMaterial color={ambientColor} emissive={ambientColor}
+            emissiveIntensity={(ambientBrightness / 100) * 1.4} toneMapped={false} />
+        </mesh>
+        {/* Chrome handle — outer face, swings with the door */}
+        <mesh position={[0.046, 0.15, -0.38]} castShadow>
+          <boxGeometry args={[0.012, 0.04, 0.16]} />
+          <meshStandardMaterial color="#cccccc" metalness={0.92} roughness={0.08} />
+        </mesh>
+        {/* LEFT MIRROR — at window line (world y≈1.23); rotation.y=0 deployed, -PI/2 folded */}
+        <group name="mirror_left" position={[0.042, 0.33, -0.03]}>
           {/* Stalk arm — body colour, 9 cm long outward */}
           <mesh position={[0.048, 0, 0]} castShadow receiveShadow>
             <boxGeometry args={[0.09, 0.06, 0.06]} />
@@ -721,8 +738,19 @@ export default function VehicleModel() {
           <boxGeometry args={[0.08, 0.06, 0.60]} />
           <meshStandardMaterial color="#333" metalness={0.8} roughness={0.2} />
         </mesh>
-        {/* RIGHT MIRROR — mirror image of left; rotation.y=0 deployed, +PI/2 folded */}
-        <group name="mirror_right" position={[-0.042, 0.17, -0.03]}>
+        {/* Ambient strip — inner face, swings with the door */}
+        <mesh name="ambient_door_fr" position={[0.046, 0.10, -0.32]}>
+          <boxGeometry args={[0.012, 0.04, 0.50]} />
+          <meshStandardMaterial color={ambientColor} emissive={ambientColor}
+            emissiveIntensity={(ambientBrightness / 100) * 1.4} toneMapped={false} />
+        </mesh>
+        {/* Chrome handle — outer face, swings with the door */}
+        <mesh position={[-0.046, 0.15, -0.38]} castShadow>
+          <boxGeometry args={[0.012, 0.04, 0.16]} />
+          <meshStandardMaterial color="#cccccc" metalness={0.92} roughness={0.08} />
+        </mesh>
+        {/* RIGHT MIRROR — at window line (world y≈1.23); rotation.y=0 deployed, +PI/2 folded */}
+        <group name="mirror_right" position={[-0.042, 0.33, -0.03]}>
           {/* Stalk arm */}
           <mesh position={[-0.048, 0, 0]} castShadow receiveShadow>
             <boxGeometry args={[0.09, 0.06, 0.06]} />
@@ -766,6 +794,17 @@ export default function VehicleModel() {
           <boxGeometry args={[0.08, 0.06, 0.50]} />
           <meshStandardMaterial color="#333" metalness={0.8} roughness={0.2} />
         </mesh>
+        {/* Ambient strip — inner face, swings with the door */}
+        <mesh name="ambient_door_rl" position={[-0.046, 0.10, -0.12]}>
+          <boxGeometry args={[0.012, 0.04, 0.42]} />
+          <meshStandardMaterial color={ambientColor} emissive={ambientColor}
+            emissiveIntensity={(ambientBrightness / 100) * 1.4} toneMapped={false} />
+        </mesh>
+        {/* Chrome handle — outer face, swings with the door */}
+        <mesh position={[0.046, 0.15, -0.22]} castShadow>
+          <boxGeometry args={[0.012, 0.04, 0.16]} />
+          <meshStandardMaterial color="#cccccc" metalness={0.92} roughness={0.08} />
+        </mesh>
       </group>
 
       {/* REAR RIGHT DOOR */}
@@ -786,6 +825,17 @@ export default function VehicleModel() {
         <mesh position={[0, 0.57, -0.25]} castShadow receiveShadow>
           <boxGeometry args={[0.08, 0.06, 0.50]} />
           <meshStandardMaterial color="#333" metalness={0.8} roughness={0.2} />
+        </mesh>
+        {/* Ambient strip — inner face, swings with the door */}
+        <mesh name="ambient_door_rr" position={[0.046, 0.10, -0.12]}>
+          <boxGeometry args={[0.012, 0.04, 0.42]} />
+          <meshStandardMaterial color={ambientColor} emissive={ambientColor}
+            emissiveIntensity={(ambientBrightness / 100) * 1.4} toneMapped={false} />
+        </mesh>
+        {/* Chrome handle — outer face, swings with the door */}
+        <mesh position={[-0.046, 0.15, -0.22]} castShadow>
+          <boxGeometry args={[0.012, 0.04, 0.16]} />
+          <meshStandardMaterial color="#cccccc" metalness={0.92} roughness={0.08} />
         </mesh>
       </group>
 
@@ -1082,27 +1132,7 @@ export default function VehicleModel() {
         <meshStandardMaterial color={ambientColor} emissive={ambientColor}
           emissiveIntensity={(ambientBrightness / 100) * 1.4} toneMapped={false} />
       </mesh>
-      {/* Door ambient strips — inner face of each door */}
-      <mesh name="ambient_door_fl" position={[0.84, 1.00, 0.18]}>
-        <boxGeometry args={[0.012, 0.04, 0.50]} />
-        <meshStandardMaterial color={ambientColor} emissive={ambientColor}
-          emissiveIntensity={(ambientBrightness / 100) * 1.4} toneMapped={false} />
-      </mesh>
-      <mesh name="ambient_door_fr" position={[-0.84, 1.00, 0.18]}>
-        <boxGeometry args={[0.012, 0.04, 0.50]} />
-        <meshStandardMaterial color={ambientColor} emissive={ambientColor}
-          emissiveIntensity={(ambientBrightness / 100) * 1.4} toneMapped={false} />
-      </mesh>
-      <mesh name="ambient_door_rl" position={[0.84, 1.00, -0.42]}>
-        <boxGeometry args={[0.012, 0.04, 0.42]} />
-        <meshStandardMaterial color={ambientColor} emissive={ambientColor}
-          emissiveIntensity={(ambientBrightness / 100) * 1.4} toneMapped={false} />
-      </mesh>
-      <mesh name="ambient_door_rr" position={[-0.84, 1.00, -0.42]}>
-        <boxGeometry args={[0.012, 0.04, 0.42]} />
-        <meshStandardMaterial color={ambientColor} emissive={ambientColor}
-          emissiveIntensity={(ambientBrightness / 100) * 1.4} toneMapped={false} />
-      </mesh>
+      {/* Door ambient strips moved into the door groups below — they must swing with the doors */}
 
       {/* ════════════════════════════════════════════════════════════════════ */}
       {/* PARKING SENSORS — 4 front, 4 rear                                   */}
@@ -1132,26 +1162,4 @@ export default function VehicleModel() {
         <meshStandardMaterial color="#555" metalness={0.9} roughness={0.1} />
       </mesh>
 
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* LICENSE PLATES — front and rear                                      */}
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* Plates sit ON the bumper faces (±2.005), not buried inside them */}
-      <mesh position={[0, 0.80, 2.012]} castShadow>
-        <boxGeometry args={[0.38, 0.13, 0.01]} />
-        <meshStandardMaterial color="#f5f5f0" metalness={0.05} roughness={0.7} />
-      </mesh>
-      <mesh position={[0, 0.80, -2.012]} castShadow>
-        <boxGeometry args={[0.38, 0.13, 0.01]} />
-        <meshStandardMaterial color="#f5f5f0" metalness={0.05} roughness={0.7} />
-      </mesh>
-
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* DOOR HANDLES — slim recessed chrome strip on each door               */}
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* Front-left door handle: x=0.89 (outer face of door), y=1.05 (mid-door), z=0.12 */}
-      <mesh position={[0.895, 1.05, 0.12]} castShadow>
-        <boxGeometry args={[0.012, 0.04, 0.16]} />
-        <meshStandardMaterial color="#cccccc" metalness={0.92} roughness={0.08} />
-      </mesh>
-      {/* Front-right door handle */}
-      <mesh position={[-0.895, 1.05, 0.
+      {/* ═════════════════════════════════════════�
