@@ -1,0 +1,1063 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <title>Three.js WebGL - Ultimate Honda City Replica Showroom</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      body {
+        color: #eeeeee;
+        background: #020202;
+        margin: 0;
+        overflow: hidden;
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        -webkit-user-select: none;
+        user-select: none;
+      }
+
+      #info {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        padding: 25px;
+        box-sizing: border-box;
+        text-align: center;
+        z-index: 100;
+        background: linear-gradient(
+          to bottom,
+          rgba(0, 0, 0, 0.95) 0%,
+          rgba(0, 0, 0, 0) 100%
+        );
+        pointer-events: none;
+      }
+
+      h1 {
+        margin: 0 0 5px 0;
+        font-size: 24px;
+        font-weight: 700;
+        letter-spacing: 1.5px;
+        text-transform: uppercase;
+        color: #ffffff;
+      }
+      p {
+        margin: 0 0 8px 0;
+        font-size: 12px;
+        color: #bbb;
+      }
+
+      #cardekho-hud {
+        display: inline-block;
+        font-size: 11px;
+        background: rgba(0, 255, 204, 0.15);
+        color: #00ffcc;
+        padding: 4px 14px;
+        border-radius: 15px;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+        font-weight: bold;
+        border: 1px solid rgba(0, 255, 204, 0.3);
+        transition: all 0.3s ease;
+      }
+
+      #controls-overlay {
+        position: absolute;
+        bottom: 30px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 100;
+        background: rgba(10, 10, 10, 0.94);
+        padding: 15px 25px;
+        border-radius: 30px;
+        box-shadow: 0 20px 45px rgba(0, 0, 0, 0.85);
+        backdrop-filter: blur(20px);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        display: flex;
+        gap: 20px;
+        align-items: center;
+      }
+
+      .picker-group {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 5px;
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        color: #999;
+        letter-spacing: 0.5px;
+      }
+
+      .picker-group input[type="color"] {
+        -webkit-appearance: none;
+        border: none;
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        cursor: pointer;
+        background: none;
+      }
+
+      .picker-group input[type="color"]::-webkit-color-swatch-wrapper {
+        padding: 0;
+      }
+      .picker-group input[type="color"]::-webkit-color-swatch {
+        border: 2px solid #ffffff;
+        border-radius: 50%;
+      }
+
+      .btn {
+        background: #1a1a1a;
+        border: 1px solid #333;
+        color: #eee;
+        padding: 9px 16px;
+        border-radius: 20px;
+        cursor: pointer;
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        transition: all 0.3s ease;
+      }
+      .btn:hover {
+        background: #00ffcc;
+        color: #000;
+        border-color: #00ffcc;
+        box-shadow: 0 0 10px rgba(0, 255, 204, 0.4);
+      }
+      .btn-active {
+        background: #00ffcc;
+        color: #000;
+        border-color: #00ffcc;
+      }
+
+      #container {
+        width: 100vw;
+        height: 100vh;
+        background: #ffffff;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="info">
+      <h1>Honda City Flagship 360° Showroom</h1>
+      <p>
+        Click directly on any door, bonnet, or boot to operate panels. Use the
+        toggle button below to warp inside.
+      </p>
+      <div id="cardekho-hud">Exterior 360° View</div>
+    </div>
+
+    <div id="controls-overlay">
+      <div class="picker-group">
+        <input
+          id="paint-picker"
+          type="color"
+          value="#53565A"
+          aria-label="Car paint color picker"
+        />
+        <label for="paint-picker">Paint</label>
+      </div>
+      <button class="btn" id="view-toggle-btn">View Interior</button>
+      <button class="btn" id="ignition-btn" aria-pressed="false">
+        Engine Ignition
+      </button>
+      <button class="btn" id="wiper-btn" aria-pressed="false">Wipers</button>
+      <button class="btn" id="reset-btn">Reset</button>
+    </div>
+
+    <div id="container"></div>
+
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+      }
+    </script>
+
+    <script type="module">
+      import * as THREE from "three";
+      import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+      let camera, scene, renderer, controls, raycaster, mouse;
+
+      // Material Definitions
+      let bodyPaintMaterial,
+        chromeMaterial,
+        darkAlloyMaterial,
+        brightAlloyMaterial;
+      let windowGlassMaterial,
+        mechanicalBlackMat,
+        mattePlasticsMat,
+        interiorLeatherMaterial;
+      let ambientLightMat,
+        engineAlloyMat,
+        engineShroudMat,
+        carbonDiffuserMat,
+        emitterMat;
+      let headlightLensMat, tailLightLensMat, fogLightLensMat;
+
+      // Object Tracking Registries
+      const interactiveGroups = {};
+      const hitBoxes = [];
+      const frontWheels = [];
+      const wiperMeshes = [];
+      let steeringWheelMesh = null;
+      let gearShifterMesh = null;
+      let floorPuddleLight = null;
+
+      // Kinematics Configuration Registry (Precise 5th-Gen Axis Rotations)
+      const carStates = {
+        door_fl: {
+          open: false,
+          current: 0,
+          target: 0,
+          type: "rotateY",
+          max: 0.9,
+          speed: 0.08,
+        },
+        door_fr: {
+          open: false,
+          current: 0,
+          target: 0,
+          type: "rotateY",
+          max: 0.9,
+          speed: 0.08,
+        },
+        door_rl: {
+          open: false,
+          current: 0,
+          target: 0,
+          type: "rotateY",
+          max: 0.83,
+          speed: 0.08,
+        },
+        door_rr: {
+          open: false,
+          current: 0,
+          target: 0,
+          type: "rotateY",
+          max: 0.83,
+          speed: 0.08,
+        },
+        // Door rotations: left-side doors open outward (negative yaw), right-side doors mirror (positive yaw)
+        bonnet: {
+          open: false,
+          current: 0,
+          target: 0,
+          type: "rotateX",
+          max: -0.7,
+          speed: 0.05,
+        },
+        boot: {
+          open: false,
+          current: 0,
+          target: 0,
+          type: "rotateX",
+          max: 0.8,
+          speed: 0.06,
+        },
+        // Mirrors should pivot outward: left negative yaw, right positive yaw
+        mirror_l: {
+          open: false,
+          current: 0,
+          target: 0,
+          type: "rotateY",
+          max: 1.1,
+          speed: 0.09,
+        },
+        mirror_r: {
+          open: false,
+          current: 0,
+          target: 0,
+          type: "rotateY",
+          max: 1.1,
+          speed: 0.09,
+        },
+        window_fl: {
+          open: false,
+          current: 0,
+          target: 0,
+          type: "translateY",
+          max: -0.32,
+          speed: 0.06,
+        },
+        window_fr: {
+          open: false,
+          current: 0,
+          target: 0,
+          type: "translateY",
+          max: -0.32,
+          speed: 0.06,
+        },
+        rear_armrest: {
+          open: false,
+          current: 0,
+          target: 0,
+          type: "rotateX",
+          max: 1.45,
+          speed: 0.08,
+        },
+        gear_rod: {
+          open: false,
+          current: 0,
+          target: 0,
+          type: "translateZ",
+          max: -0.08,
+          speed: 0.09,
+        },
+
+        wipersActive: false,
+        ignitionOn: false,
+        isInteriorView: false,
+      };
+
+      init();
+
+      function init() {
+        const container = document.getElementById("container");
+
+        renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setAnimationLoop(animate);
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        container.appendChild(renderer.domElement);
+
+        scene = new THREE.Scene();
+        // Renderer is transparent so container gradient shows through
+        scene.background = null;
+        // Shift fog further out so the car remains fully visible
+        scene.fog = new THREE.Fog(0xffffff, 40, 120);
+
+        camera = new THREE.PerspectiveCamera(
+          38,
+          window.innerWidth / window.innerHeight,
+          0.1,
+          50,
+        );
+        camera.position.set(5.0, 1.8, -5.0);
+
+        controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.maxPolarAngle = (Math.PI / 2) * 0.96;
+        controls.minDistance = 0.3;
+        controls.maxDistance = 10.0;
+        controls.target.set(0, 0.5, 0);
+
+        raycaster = new THREE.Raycaster();
+        mouse = new THREE.Vector2();
+
+        // Lighting Setup
+        const mainLight = new THREE.DirectionalLight(0xffffff, 3.2);
+        mainLight.position.set(5, 8, -3);
+        mainLight.castShadow = true;
+        mainLight.shadow.mapSize.set(2048, 2048);
+        mainLight.shadow.bias = -0.0001;
+        scene.add(mainLight);
+
+        const hemiLight = new THREE.HemisphereLight(0xffffff, 0xdddddd, 1.6);
+        scene.add(hemiLight);
+        // Soft ambient fill so dark areas remain visible
+        const ambient = new THREE.AmbientLight(0xffffff, 0.25);
+        scene.add(ambient);
+        renderer.toneMappingExposure = 1.0;
+
+        const floorGrid = new THREE.GridHelper(20, 40, 0x00ffcc, 0x111111);
+        floorGrid.position.y = 0.001;
+        floorGrid.material.opacity = 0.04;
+        floorGrid.material.transparent = true;
+        scene.add(floorGrid);
+
+        const shadowFloor = new THREE.Mesh(
+          new THREE.PlaneGeometry(30, 30),
+          new THREE.ShadowMaterial({ opacity: 0.6 }),
+        );
+        shadowFloor.rotation.x = -Math.PI / 2;
+        shadowFloor.receiveShadow = true;
+        scene.add(shadowFloor);
+
+        floorPuddleLight = new THREE.SpotLight(
+          0x00ffcc,
+          0,
+          3,
+          Math.PI / 4,
+          0.5,
+          1,
+        );
+        floorPuddleLight.position.set(0.85, 0.6, 0.4);
+        floorPuddleLight.target.position.set(1.4, 0, 0.4);
+        scene.add(floorPuddleLight);
+        scene.add(floorPuddleLight.target);
+
+        // Material Architecture
+        bodyPaintMaterial = new THREE.MeshPhysicalMaterial({
+          color: 0x53565a,
+          metalness: 0.9,
+          roughness: 0.15,
+          clearcoat: 1.0,
+          clearcoatRoughness: 0.02,
+        });
+        chromeMaterial = new THREE.MeshStandardMaterial({
+          color: 0xeeeeee,
+          metalness: 1.0,
+          roughness: 0.03,
+        });
+        darkAlloyMaterial = new THREE.MeshStandardMaterial({
+          color: 0x151515,
+          roughness: 0.5,
+          metalness: 0.7,
+        });
+        brightAlloyMaterial = new THREE.MeshStandardMaterial({
+          color: 0xdcdcdc,
+          metalness: 0.9,
+          roughness: 0.1,
+        });
+        windowGlassMaterial = new THREE.MeshPhysicalMaterial({
+          color: 0x83a7ba,
+          roughness: 0.02,
+          transmission: 0.98,
+          transparent: true,
+          opacity: 0.25,
+          ior: 1.52,
+          metalness: 0.1,
+          clearcoat: 0.3,
+          clearcoatRoughness: 0.02,
+          reflectivity: 0.6,
+          thickness: 0.06,
+          depthWrite: false,
+          side: THREE.DoubleSide,
+        });
+        mechanicalBlackMat = new THREE.MeshStandardMaterial({
+          color: 0x0c0c0c,
+          roughness: 0.8,
+        });
+        mattePlasticsMat = new THREE.MeshStandardMaterial({
+          color: 0x181818,
+          roughness: 0.75,
+        }); // Anti-glare dash top
+        interiorLeatherMaterial = new THREE.MeshStandardMaterial({
+          color: 0xe8e1ce,
+          roughness: 0.6,
+        }); // Premium Ivory
+        carbonDiffuserMat = new THREE.MeshStandardMaterial({
+          color: 0x1d1d1d,
+          roughness: 0.7,
+        });
+        engineAlloyMat = new THREE.MeshStandardMaterial({
+          color: 0x777777,
+          metalness: 0.8,
+          roughness: 0.3,
+        });
+        engineShroudMat = new THREE.MeshStandardMaterial({
+          color: 0x222222,
+          roughness: 0.6,
+        });
+        ambientLightMat = new THREE.MeshStandardMaterial({
+          color: 0x000000,
+          emissive: 0x000000,
+        });
+        emitterMat = new THREE.MeshStandardMaterial({
+          color: 0x220000,
+          emissive: 0x000000,
+        });
+        headlightLensMat = new THREE.MeshStandardMaterial({
+          color: 0xffffff,
+          emissive: 0xffffee,
+          emissiveIntensity: 1.0,
+          roughness: 0.08,
+          metalness: 0.05,
+        });
+        tailLightLensMat = new THREE.MeshStandardMaterial({
+          color: 0xff2200,
+          emissive: 0xff2200,
+          emissiveIntensity: 0.9,
+          roughness: 0.15,
+          metalness: 0.03,
+        });
+        fogLightLensMat = new THREE.MeshStandardMaterial({
+          color: 0xffbb33,
+          emissive: 0xffaa11,
+          emissiveIntensity: 0.75,
+          roughness: 0.18,
+          metalness: 0.02,
+        });
+
+        buildVehicleReplica();
+        setupInterfaceEvents();
+        window.addEventListener("click", onSceneClick);
+        window.addEventListener("resize", onWindowResize);
+      }
+
+      function buildVehicleReplica() {
+        const carRoot = new THREE.Group();
+
+        // 1. Precise 5th-Gen Scale Chassis Frame (4.58m L x 1.75m W x 1.49m H)
+        const floorChassis = new THREE.Mesh(
+          new THREE.BoxGeometry(1.68, 0.15, 4.4),
+          mechanicalBlackMat,
+        );
+        floorChassis.position.y = 0.22;
+        carRoot.add(floorChassis);
+
+        const bodyShell = new THREE.Mesh(
+          new THREE.BoxGeometry(1.7, 0.6, 2.2),
+          bodyPaintMaterial,
+        );
+        bodyShell.position.set(0, 0.65, -0.1);
+        carRoot.add(bodyShell);
+
+        const roofPlank = new THREE.Mesh(
+          new THREE.BoxGeometry(1.5, 0.03, 1.8),
+          bodyPaintMaterial,
+        );
+        roofPlank.position.set(0, 1.35, -0.2);
+        carRoot.add(roofPlank);
+
+        // 2. Pillar-Anchored Pivot Groups (Eliminates misalignment & handles outward swing)
+        function addInteractivePivotNode(
+          key,
+          meshGeometry,
+          pivotOffset,
+          worldPos,
+          mat,
+        ) {
+          const pivotGroup = new THREE.Group();
+          pivotGroup.position.copy(worldPos);
+
+          const componentMesh = new THREE.Mesh(meshGeometry, mat);
+          componentMesh.castShadow = true;
+          componentMesh.receiveShadow = true;
+          // Offset mesh inside group so group origin acts exactly as the hinge line
+          componentMesh.position.copy(pivotOffset).negate();
+
+          pivotGroup.add(componentMesh);
+          carRoot.add(pivotGroup);
+
+          interactiveGroups[key] = pivotGroup;
+          hitBoxes.push(componentMesh);
+          componentMesh.userData = { stateKey: key };
+          return componentMesh;
+        }
+
+        // Door Panels (Width/height balanced perfectly against chassis profile)
+        const dGeo = new THREE.BoxGeometry(0.05, 0.65, 0.95);
+        const doorWindowGeo = new THREE.BoxGeometry(0.045, 0.42, 0.82);
+
+        function addDoorWindow(group) {
+          const glass = new THREE.Mesh(doorWindowGeo, windowGlassMaterial);
+          glass.position.set(0, 0.05, -0.44);
+          glass.castShadow = false;
+          glass.receiveShadow = false;
+          glass.renderOrder = 2;
+          group.add(glass);
+        }
+
+        // Left Front (Origin pinned at front edge pillar)
+        addInteractivePivotNode(
+          "door_fl",
+          dGeo,
+          new THREE.Vector3(0, 0, 0.475),
+          new THREE.Vector3(0.84, 0.65, 0.475),
+          bodyPaintMaterial,
+        );
+        addDoorWindow(interactiveGroups["door_fl"]);
+        // Right Front
+        addInteractivePivotNode(
+          "door_fr",
+          dGeo,
+          new THREE.Vector3(0, 0, 0.475),
+          new THREE.Vector3(-0.84, 0.65, 0.475),
+          bodyPaintMaterial,
+        );
+        addDoorWindow(interactiveGroups["door_fr"]);
+        // Left Rear
+        addInteractivePivotNode(
+          "door_rl",
+          dGeo,
+          new THREE.Vector3(0, 0, 0.475),
+          new THREE.Vector3(0.84, 0.65, -0.475),
+          bodyPaintMaterial,
+        );
+        addDoorWindow(interactiveGroups["door_rl"]);
+        // Right Rear
+        addInteractivePivotNode(
+          "door_rr",
+          dGeo,
+          new THREE.Vector3(0, 0, 0.475),
+          new THREE.Vector3(-0.84, 0.65, -0.475),
+          bodyPaintMaterial,
+        );
+        addDoorWindow(interactiveGroups["door_rr"]);
+
+        // Mirrors
+        const mirGeo = new THREE.BoxGeometry(0.22, 0.1, 0.12);
+        // Move mirror meshes outward from the hinge so they sit outside the body
+        addInteractivePivotNode(
+          "mirror_l",
+          mirGeo,
+          new THREE.Vector3(-0.32, 0, 0),
+          new THREE.Vector3(0.98, 0.85, 1.05),
+          chromeMaterial,
+        );
+        addInteractivePivotNode(
+          "mirror_r",
+          mirGeo,
+          new THREE.Vector3(0.32, 0, 0),
+          new THREE.Vector3(-0.98, 0.85, 1.05),
+          chromeMaterial,
+        );
+
+        // Front Bonnet Assembly & Engine Block
+        addInteractivePivotNode(
+          "bonnet",
+          new THREE.BoxGeometry(1.55, 0.03, 1.1),
+          new THREE.Vector3(0, 0, -0.55),
+          new THREE.Vector3(0, 0.8, 1.5),
+          bodyPaintMaterial,
+        );
+
+        const engineBayGroup = new THREE.Group();
+        // Move engine block forward so it sits closer to the bonnet and becomes visible.
+        engineBayGroup.position.set(0, 0.4, 1.75);
+        const engBlock = new THREE.Mesh(
+          new THREE.BoxGeometry(0.7, 0.3, 0.5),
+          engineAlloyMat,
+        );
+        const engCover = new THREE.Mesh(
+          new THREE.BoxGeometry(0.6, 0.08, 0.38),
+          engineShroudMat,
+        );
+        engCover.position.y = 0.18;
+        const badge = new THREE.Mesh(
+          new THREE.BoxGeometry(0.2, 0.01, 0.06),
+          chromeMaterial,
+        );
+        badge.position.set(0, 0.22, 0);
+        engineBayGroup.add(engBlock, engCover, badge);
+        carRoot.add(engineBayGroup);
+
+        // Deep Hollow 506-Liter Boot Compartment Construction
+        addInteractivePivotNode(
+          "boot",
+          new THREE.BoxGeometry(1.48, 0.25, 0.75),
+          new THREE.Vector3(0, 0.125, 0.375),
+          new THREE.Vector3(0, 0.8, -1.55),
+          bodyPaintMaterial,
+        );
+
+        const trunkCavity = new THREE.Mesh(
+          new THREE.BoxGeometry(1.3, 0.35, 0.7),
+          mechanicalBlackMat,
+        );
+        trunkCavity.position.set(0, 0.32, -1.45);
+        carRoot.add(trunkCavity);
+
+        const drlStrip = new THREE.Mesh(
+          new THREE.BoxGeometry(1.4, 0.02, 0.01),
+          emitterMat,
+        );
+        drlStrip.position.set(0, 0.78, -1.93);
+        carRoot.add(drlStrip);
+
+        const lowerDiffuser = new THREE.Mesh(
+          new THREE.BoxGeometry(1.55, 0.15, 0.25),
+          carbonDiffuserMat,
+        );
+        lowerDiffuser.position.set(0, 0.18, -1.9);
+        carRoot.add(lowerDiffuser);
+
+        const headlightLeft = new THREE.Mesh(
+          new THREE.BoxGeometry(0.16, 0.08, 0.08),
+          headlightLensMat,
+        );
+        headlightLeft.position.set(0.95, 0.66, 2.05);
+        const headlightRight = headlightLeft.clone();
+        headlightRight.position.set(-0.95, 0.66, 2.05);
+        carRoot.add(headlightLeft, headlightRight);
+
+        const fogLeft = new THREE.Mesh(
+          new THREE.BoxGeometry(0.12, 0.08, 0.08),
+          fogLightLensMat,
+        );
+        fogLeft.position.set(0.92, 0.35, 1.95);
+        const fogRight = fogLeft.clone();
+        fogRight.position.set(-0.92, 0.35, 1.95);
+        carRoot.add(fogLeft, fogRight);
+
+        const tailLightLeft = new THREE.Mesh(
+          new THREE.BoxGeometry(0.18, 0.07, 0.06),
+          tailLightLensMat,
+        );
+        tailLightLeft.position.set(0.95, 0.78, -2.05);
+        const tailLightRight = tailLightLeft.clone();
+        tailLightRight.position.set(-0.95, 0.78, -2.05);
+        carRoot.add(tailLightLeft, tailLightRight);
+
+        // Shark-Fin Antenna
+        const antenna = new THREE.Mesh(
+          new THREE.ConeGeometry(0.03, 0.1, 4),
+          bodyPaintMaterial,
+        );
+        antenna.rotation.x = -0.4;
+        antenna.position.set(0, 1.4, -0.9);
+        carRoot.add(antenna);
+
+        // Windows Glass Layers
+        const glassGeo = new THREE.Mesh(
+          new THREE.BoxGeometry(1.46, 0.45, 1.88),
+          windowGlassMaterial,
+        );
+        glassGeo.position.set(0, 1.1, -0.15);
+        carRoot.add(glassGeo);
+
+        // 3. Ergonomic Dual-Tone Seating Configuration (Lowered to clear Sunroof)
+        const cabinContainer = new THREE.Group();
+        cabinContainer.position.set(0, 0.25, -0.1);
+
+        function buildPremiumSeat(posX, posZ) {
+          const seatGroup = new THREE.Group();
+          seatGroup.position.set(posX, 0.1, posZ);
+
+          // Lower cushion profile
+          const cushion = new THREE.Mesh(
+            new THREE.BoxGeometry(0.5, 0.1, 0.48),
+            interiorLeatherMaterial,
+          );
+          cushion.castShadow = true;
+          cushion.receiveShadow = true;
+          seatGroup.add(cushion);
+
+          // Sliced backrest height calculation prevents roof piercing
+          const backrest = new THREE.Mesh(
+            new THREE.BoxGeometry(0.46, 0.48, 0.08),
+            interiorLeatherMaterial,
+          );
+          backrest.position.set(0, 0.26, -0.22);
+          backrest.rotation.x = -0.12;
+          backrest.castShadow = true;
+          seatGroup.add(backrest);
+
+          // Dedicated standalone contoured headrest
+          const headrest = new THREE.Mesh(
+            new THREE.BoxGeometry(0.2, 0.12, 0.07),
+            interiorLeatherMaterial,
+          );
+          headrest.position.set(0, 0.54, -0.25);
+          seatGroup.add(headrest);
+
+          cabinContainer.add(seatGroup);
+        }
+
+        // Row 1: Dual Front Bucket Seats
+        buildPremiumSeat(0.32, 0.2);
+        buildPremiumSeat(-0.32, 0.2);
+
+        // Row 2: 3-Passenger Passenger Rear Bench
+        const benchBase = new THREE.Mesh(
+          new THREE.BoxGeometry(1.38, 0.12, 0.52),
+          interiorLeatherMaterial,
+        );
+        benchBase.position.set(0, 0.12, -0.65);
+        const benchBack = new THREE.Mesh(
+          new THREE.BoxGeometry(1.36, 0.48, 0.09),
+          interiorLeatherMaterial,
+        );
+        benchBack.position.set(0, 0.38, -0.88);
+        benchBack.rotation.x = -0.15;
+        cabinContainer.add(benchBase, benchBack);
+
+        // Triple Distinct Rear Headrests
+        for (let i = -1; i <= 1; i++) {
+          const rHeadrest = new THREE.Mesh(
+            new THREE.BoxGeometry(0.2, 0.11, 0.07),
+            interiorLeatherMaterial,
+          );
+          rHeadrest.position.set(i * 0.4, 0.66, -0.92);
+          cabinContainer.add(rHeadrest);
+        }
+
+        // Rear Functional Fold-Down Armrest Node
+        addInteractivePivotNode(
+          "rear_armrest",
+          new THREE.BoxGeometry(0.24, 0.32, 0.08),
+          new THREE.Vector3(0, -0.16, 0.04),
+          new THREE.Vector3(0, 0.6, -0.82),
+          interiorLeatherMaterial,
+        );
+
+        // 4. Wave-Key Driver Dashboard and Controls Setup
+        const dashUpper = new THREE.Mesh(
+          new THREE.BoxGeometry(1.46, 0.3, 0.35),
+          mattePlasticsMat,
+        );
+        dashUpper.position.set(0, 0.62, 0.85);
+        const dashLowerIvory = new THREE.Mesh(
+          new THREE.BoxGeometry(1.44, 0.18, 0.05),
+          interiorLeatherMaterial,
+        );
+        dashLowerIvory.position.set(0, 0.45, 1.0);
+        cabinContainer.add(dashUpper, dashLowerIvory);
+
+        const steeringColumn = new THREE.Group();
+        steeringColumn.position.set(0.32, 0.52, 0.75);
+        steeringColumn.rotation.x = -0.3;
+        steeringWheelMesh = new THREE.Mesh(
+          new THREE.TorusGeometry(0.12, 0.015, 12, 48),
+          mechanicalBlackMat,
+        );
+        steeringColumn.add(steeringWheelMesh);
+        cabinContainer.add(steeringColumn);
+
+        // Center Console Shifter Track
+        const consoleTunnel = new THREE.Mesh(
+          new THREE.BoxGeometry(0.22, 0.22, 0.6),
+          mattePlasticsMat,
+        );
+        consoleTunnel.position.set(0, 0.11, 0.4);
+        const shifterBase = new THREE.Group();
+        shifterBase.position.set(0, 0.22, 0.5);
+        gearShifterMesh = new THREE.Mesh(
+          new THREE.BoxGeometry(0.03, 0.12, 0.03),
+          chromeMaterial,
+        );
+        shifterBase.add(gearShifterMesh);
+        interactiveGroups["gear_rod"] = shifterBase;
+        cabinContainer.add(consoleTunnel, shifterBase);
+
+        carRoot.add(cabinContainer);
+
+        // 5. Wheels and Suspension Axle Layout
+        const wheelGeo = new THREE.CylinderGeometry(0.28, 0.28, 0.2, 24);
+        wheelGeo.rotateZ(Math.PI / 2);
+        const coordinates = [
+          [0.8, 0.28, 1.15],
+          [-0.8, 0.28, 1.15],
+          [0.8, 0.28, -1.15],
+          [-0.8, 0.28, -1.15],
+        ];
+
+        coordinates.forEach((pos, idx) => {
+          const hubGroup = new THREE.Group();
+          hubGroup.position.set(pos[0], pos[1], pos[2]);
+
+          const tireMesh = new THREE.Mesh(wheelGeo, darkAlloyMaterial);
+          const spokes = new THREE.Mesh(
+            new THREE.BoxGeometry(0.02, 0.45, 0.45),
+            brightAlloyMaterial,
+          );
+          tireMesh.add(spokes);
+          tireMesh.castShadow = true;
+          hubGroup.add(tireMesh);
+
+          if (idx < 2) frontWheels.push(hubGroup);
+          carRoot.add(hubGroup);
+        });
+
+        // Windshield Wipers
+        const armGeo = new THREE.BoxGeometry(0.01, 0.01, 0.45);
+        const wiperL = new THREE.Mesh(armGeo, mechanicalBlackMat);
+        wiperL.position.set(0.25, 0.82, 1.05);
+        const wiperR = new THREE.Mesh(armGeo, mechanicalBlackMat);
+        wiperR.position.set(-0.25, 0.82, 1.05);
+        scene.add(wiperL, wiperR);
+        wiperMeshes.push(wiperL, wiperR);
+
+        scene.add(carRoot);
+      }
+
+      // --- Raycaster Click Verification System ---
+      function onSceneClick(event) {
+        // Dismiss interaction if user is manipulating HTML overlays (use bounding rect)
+        const overlay = document.getElementById("controls-overlay");
+        if (overlay) {
+          const r = overlay.getBoundingClientRect();
+          if (
+            event.clientX >= r.left &&
+            event.clientX <= r.right &&
+            event.clientY >= r.top &&
+            event.clientY <= r.bottom
+          )
+            return;
+        }
+
+        mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+        mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+        raycaster.setFromCamera(mouse, camera);
+        const intersects = raycaster.intersectObjects(hitBoxes);
+
+        if (intersects.length > 0) {
+          const targetStateKey = intersects[0].object.userData.stateKey;
+          if (targetStateKey && carStates[targetStateKey]) {
+            const state = carStates[targetStateKey];
+            state.open = !state.open;
+            state.target = state.open ? state.max : 0;
+
+            if (targetStateKey === "door_fl")
+              floorPuddleLight.intensity = state.open ? 6.0 : 0.0;
+          }
+        }
+      }
+
+      // --- Continuous Mechanical Animation Loop ---
+      function animate() {
+        controls.update();
+        const timestamp = performance.now();
+
+        // Dynamic CarDekho HUD string calculation via positional ranges
+        const distance = camera.position.distanceTo(controls.target);
+        const hud = document.getElementById("cardekho-hud");
+        if (distance < 1.4 || carStates.isInteriorView) {
+          hud.textContent = "Interior 360° View";
+          hud.style.color = "#ffaa00";
+          hud.style.borderColor = "rgba(255,170,0,0.4)";
+          hud.style.background = "rgba(255,170,0,0.12)";
+        } else {
+          hud.textContent = "Exterior 360° View";
+          hud.style.color = "#00ffcc";
+          hud.style.borderColor = "rgba(0,255,204,0.3)";
+          hud.style.background = "rgba(0,255,204,0.15)";
+        }
+
+        // Interpolate Structural Open/Close Kinematics Matrices
+        for (const key in carStates) {
+          const state = carStates[key];
+          const group = interactiveGroups[key];
+
+          if (group && state.type) {
+            state.current += (state.target - state.current) * state.speed;
+            if (state.type === "rotateY") {
+              if (key.startsWith("door_") || key.startsWith("mirror_")) {
+                const direction = group.position.x > 0 ? -1 : 1;
+                group.rotation.y = state.current * direction;
+              } else {
+                group.rotation.y = state.current;
+              }
+            }
+            if (state.type === "rotateX") group.rotation.x = state.current;
+            if (state.type === "translateZ") group.position.z = state.current;
+            if (state.type === "translateY") group.position.y = state.current;
+          }
+        }
+
+        // Continuous Oscillating Windshield Wiper Sweeps
+        if (carStates.wipersActive) {
+          const angle = Math.sin(timestamp * 0.008) * 0.65 + 0.65;
+          wiperMeshes.forEach((w) => (w.rotation.z = angle));
+        } else {
+          wiperMeshes.forEach(
+            (w) => (w.rotation.z += (0 - w.rotation.z) * 0.1),
+          );
+        }
+
+        // Ignition Subsystem (Diagnostic wheel sweeps and illumination triggers)
+        if (carStates.ignitionOn) {
+          const spinArc = Math.sin(timestamp * 0.002) * 0.35;
+          if (steeringWheelMesh) steeringWheelMesh.rotation.z = spinArc * 2.2;
+          frontWheels.forEach((w) => (w.rotation.y = spinArc));
+          emitterMat.emissive.setHex(0xee0000);
+          emitterMat.color.setHex(0xff0000);
+        } else {
+          if (steeringWheelMesh)
+            steeringWheelMesh.rotation.z +=
+              (0 - steeringWheelMesh.rotation.z) * 0.1;
+          frontWheels.forEach(
+            (w) => (w.rotation.y += (0 - w.rotation.y) * 0.1),
+          );
+          emitterMat.emissive.setHex(0x000000);
+          emitterMat.color.setHex(0x220000);
+        }
+
+        renderer.render(scene, camera);
+      }
+
+      // --- Interface HUD Controls Overlay Listeners ---
+      function setupInterfaceEvents() {
+        const paintPicker = document.getElementById("paint-picker");
+        if (paintPicker)
+          paintPicker.addEventListener("input", function () {
+            bodyPaintMaterial.color.set(this.value);
+          });
+
+        // Explicit Interior/Exterior Camera Warp Trigger Action
+        const viewToggleBtn = document.getElementById("view-toggle-btn");
+        viewToggleBtn.addEventListener("click", function () {
+          carStates.isInteriorView = !carStates.isInteriorView;
+          if (carStates.isInteriorView) {
+            // Warp inward between the front row cushions
+            camera.position.set(0.0, 0.75, 0.05);
+            controls.target.set(0, 0.65, 0.6);
+            viewToggleBtn.textContent = "View Exterior";
+            viewToggleBtn.classList.add("btn-active");
+            viewToggleBtn.setAttribute("aria-pressed", "true");
+          } else {
+            // Warp backward to outer presentation slot
+            camera.position.set(5.0, 1.8, -5.0);
+            controls.target.set(0, 0.5, 0);
+            viewToggleBtn.textContent = "View Interior";
+            viewToggleBtn.classList.remove("btn-active");
+            viewToggleBtn.setAttribute("aria-pressed", "false");
+          }
+        });
+
+        const ignitionBtn = document.getElementById("ignition-btn");
+        ignitionBtn.addEventListener("click", function () {
+          carStates.ignitionOn = !carStates.ignitionOn;
+          this.classList.toggle("btn-active", carStates.ignitionOn);
+          this.setAttribute("aria-pressed", String(carStates.ignitionOn));
+          carStates.gear_rod.open = carStates.ignitionOn;
+          carStates.gear_rod.target = carStates.ignitionOn
+            ? carStates.gear_rod.max
+            : 0;
+        });
+
+        const wiperBtn = document.getElementById("wiper-btn");
+        wiperBtn.addEventListener("click", function () {
+          carStates.wipersActive = !carStates.wipersActive;
+          this.classList.toggle("btn-active", carStates.wipersActive);
+          this.setAttribute("aria-pressed", String(carStates.wipersActive));
+        });
+
+        document
+          .getElementById("reset-btn")
+          .addEventListener("click", function () {
+            for (const key in carStates) {
+              if (typeof carStates[key] === "object") {
+                carStates[key].open = false;
+                carStates[key].target = 0;
+              }
+            }
+            carStates.wipersActive = false;
+            carStates.ignitionOn = false;
+            carStates.isInteriorView = false;
+            floorPuddleLight.intensity = 0;
+
+            camera.position.set(5.0, 1.8, -5.0);
+            controls.target.set(0, 0.5, 0);
+
+            viewToggleBtn.textContent = "View Interior";
+            viewToggleBtn.classList.remove("btn-active");
+            viewToggleBtn.setAttribute("aria-pressed", "false");
+            ignitionBtn.classList.remove("btn-active");
+            ignitionBtn.setAttribute("aria-pressed", "false");
+            wiperBtn.classList.remove("btn-active");
+            wiperBtn.setAttribute("aria-pressed", "false");
+          });
+      }
+
+      function onWindowResize() {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      }
+    </script>
+  </body>
+</html>

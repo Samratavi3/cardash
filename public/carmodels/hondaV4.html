@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>HondaV4 — High Detail Showroom</title>
+    <style>
+      body {
+        margin: 0;
+        background: #070709;
+        color: #eee;
+        font-family: sans-serif;
+      }
+      #container {
+        width: 100vw;
+        height: 100vh;
+      }
+      #hint {
+        position: absolute;
+        left: 12px;
+        top: 12px;
+        z-index: 10;
+        background: rgba(0, 0, 0, 0.45);
+        padding: 8px 12px;
+        border-radius: 8px;
+        font-size: 13px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="hint">
+      HondaV4 — higher-poly demo. Click lights to toggle beams.
+    </div>
+    <div id="container"></div>
+
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+      }
+    </script>
+
+    <script type="module">
+      import * as THREE from "three";
+      import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+      import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
+
+      let scene, camera, renderer, controls;
+      let headSpotL, headSpotR, tailSpotL, tailSpotR;
+
+      init();
+
+      function init() {
+        const container = document.getElementById("container");
+        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.physicallyCorrectLights = true;
+        container.appendChild(renderer.domElement);
+
+        scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x0a0a0b);
+
+        camera = new THREE.PerspectiveCamera(
+          40,
+          window.innerWidth / window.innerHeight,
+          0.1,
+          100,
+        );
+        camera.position.set(6, 2.2, 6);
+
+        controls = new OrbitControls(camera, renderer.domElement);
+        controls.target.set(0, 0.8, 0);
+        controls.enableDamping = true;
+
+        // Lights
+        const dir = new THREE.DirectionalLight(0xffffff, 2.0);
+        dir.position.set(5, 10, 3);
+        dir.castShadow = true;
+        dir.shadow.mapSize.set(2048, 2048);
+        scene.add(dir);
+
+        scene.add(new THREE.HemisphereLight(0xffffff, 0x222222, 0.8));
+
+        // Materials
+        const paint = new THREE.MeshPhysicalMaterial({
+          color: 0x1f2430,
+          metalness: 0.7,
+          roughness: 0.18,
+          clearcoat: 1,
+          clearcoatRoughness: 0.02,
+          reflectivity: 0.6,
+        });
+        const chrome = new THREE.MeshStandardMaterial({
+          color: 0xeeeeee,
+          metalness: 1.0,
+          roughness: 0.03,
+        });
+        const glass = new THREE.MeshPhysicalMaterial({
+          color: 0x93a9bb,
+          transmission: 0.95,
+          transparent: true,
+          opacity: 0.18,
+          roughness: 0.02,
+          ior: 1.52,
+          thickness: 0.06,
+        });
+        const tire = new THREE.MeshStandardMaterial({
+          color: 0x0b0b0b,
+          roughness: 0.9,
+        });
+        const alloy = new THREE.MeshStandardMaterial({
+          color: 0xd9d9d9,
+          metalness: 0.9,
+          roughness: 0.08,
+        });
+
+        // Body (rounded box for smooth curves)
+        const bodyGeo = new RoundedBoxGeometry(1.85, 0.6, 2.35, 24, 0.14);
+        const body = new THREE.Mesh(bodyGeo, paint);
+        body.position.y = 0.85;
+        body.castShadow = true;
+        body.receiveShadow = true;
+        scene.add(body);
+
+        // Roof
+        const roof = new THREE.Mesh(
+          new RoundedBoxGeometry(1.4, 0.14, 1.6, 16, 0.08),
+          paint,
+        );
+        roof.position.set(0, 1.22, 0);
+        roof.castShadow = true;
+        scene.add(roof);
+
+        // Windows (slightly inset)
+        const windowMesh = new THREE.Mesh(
+          new THREE.BoxGeometry(1.36, 0.42, 1.78, 8, 4, 8),
+          glass,
+        );
+        windowMesh.position.set(0, 1.12, 0);
+        scene.add(windowMesh);
+
+        // Wheels (detailed)
+        const wheelPositions = [
+          [0.85, 0.32, 1.05],
+          [-0.85, 0.32, 1.05],
+          [0.85, 0.32, -1.05],
+          [-0.85, 0.32, -1.05],
+        ];
+        wheelPositions.forEach((p) => {
+          const hub = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.32, 0.32, 0.22, 32),
+            tire,
+          );
+          hub.rotation.z = Math.PI / 2;
+          hub.position.set(p[0], p[1], p[2]);
+          hub.castShadow = true;
+          const rim = new THREE.Mesh(
+            new THREE.TorusGeometry(0.18, 0.04, 12, 36),
+            alloy,
+          );
+          rim.rotation.z = Math.PI / 2;
+          rim.position.set(0, 0, 0);
+          hub.add(rim);
+          scene.add(hub);
+        });
+
+        // Mirrors
+        const mirGeo = new RoundedBoxGeometry(0.28, 0.12, 0.1, 8, 0.04);
+        const mirrorL = new THREE.Mesh(mirGeo, chrome);
+        mirrorL.position.set(1.02, 0.95, 1.05);
+        mirrorL.castShadow = true;
+        scene.add(mirrorL);
+        const mirrorR = mirrorL.clone();
+        mirrorR.position.set(-1.02, 0.95, 1.05);
+        scene.add(mirrorR);
+
+        // Headlights (lens + spot lights)
+        const headLensGeo = new THREE.BoxGeometry(0.2, 0.08, 0.08);
+        const headLensMat = new THREE.MeshPhysicalMaterial({
+          color: 0xffffff,
+          emissive: 0xffffee,
+          emissiveIntensity: 0.8,
+          roughness: 0.05,
+        });
+        const hlL = new THREE.Mesh(headLensGeo, headLensMat);
+        hlL.position.set(1.02, 0.68, 1.25);
+        scene.add(hlL);
+        const hlR = hlL.clone();
+        hlR.position.set(-1.02, 0.68, 1.25);
+        scene.add(hlR);
+
+        headSpotL = new THREE.SpotLight(
+          0xfff6e6,
+          2.4,
+          12,
+          Math.PI / 8,
+          0.12,
+          1,
+        );
+        headSpotL.position.set(1.02, 0.7, 1.55);
+        headSpotL.target.position.set(1.02, 0.6, 6);
+        headSpotL.castShadow = true;
+        scene.add(headSpotL);
+        scene.add(headSpotL.target);
+        headSpotR = headSpotL.clone();
+        headSpotR.position.x = -1.02;
+        headSpotR.target.position.x = -1.02;
+        scene.add(headSpotR);
+        scene.add(headSpotR.target);
+
+        // Fog lights lower
+        const fogGeo = new THREE.BoxGeometry(0.14, 0.07, 0.08);
+        const fogMat = new THREE.MeshPhysicalMaterial({
+          color: 0xffcc66,
+          emissive: 0xffcc44,
+          emissiveIntensity: 0.6,
+        });
+        const fogL = new THREE.Mesh(fogGeo, fogMat);
+        fogL.position.set(0.9, 0.42, 1.05);
+        scene.add(fogL);
+        const fogR = fogL.clone();
+        fogR.position.set(-0.9, 0.42, 1.05);
+        scene.add(fogR);
+
+        // Taillights
+        const tailGeo = new THREE.BoxGeometry(0.22, 0.08, 0.06);
+        const tailMat = new THREE.MeshStandardMaterial({
+          color: 0xff2a1a,
+          emissive: 0xff2a1a,
+          emissiveIntensity: 0.9,
+        });
+        const tlL = new THREE.Mesh(tailGeo, tailMat);
+        tlL.position.set(1.02, 0.78, -1.25);
+        scene.add(tlL);
+        const tlR = tlL.clone();
+        tlR.position.set(-1.02, 0.78, -1.25);
+        scene.add(tlR);
+
+        // Spotlights for taillight glow (soft)
+        tailSpotL = new THREE.PointLight(0xff2a1a, 0.6, 6);
+        tailSpotL.position.set(1.02, 0.78, -1.1);
+        scene.add(tailSpotL);
+        tailSpotR = tailSpotL.clone();
+        tailSpotR.position.x = -1.02;
+        scene.add(tailSpotR);
+
+        // Ground
+        const ground = new THREE.Mesh(
+          new THREE.PlaneGeometry(60, 60),
+          new THREE.MeshStandardMaterial({ color: 0x020203, roughness: 1 }),
+        );
+        ground.rotation.x = -Math.PI / 2;
+        ground.position.y = 0;
+        ground.receiveShadow = true;
+        scene.add(ground);
+
+        // Toggle lights on click
+        window.addEventListener("click", (e) => {
+          // simple toggle: if click near screen center, flip headlights
+          headSpotL.visible = !headSpotL.visible;
+          headSpotR.visible = !headSpotR.visible;
+          tailSpotL.intensity = tailSpotL.intensity > 0 ? 0 : 0.6;
+          tailSpotR.intensity = tailSpotR.intensity > 0 ? 0 : 0.6;
+        });
+
+        // initial state: lights off for subtle presentation
+        headSpotL.visible = false;
+        headSpotR.visible = false;
+
+        window.addEventListener("resize", onWindowResize);
+        animate();
+      }
+
+      function onWindowResize() {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      }
+
+      function animate() {
+        requestAnimationFrame(animate);
+        controls.update();
+        renderer.render(scene, camera);
+      }
+    </script>
+  </body>
+</html>
