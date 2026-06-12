@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useScreenConfig } from '../hooks/useScreenConfig'
 import {
@@ -82,13 +82,13 @@ function DPad({ onPress }) {
   return (
     <div className="flex flex-col items-center gap-1 py-2">
       <div className="text-[10px] text-white/40 mb-1">Mirror Adjust</div>
-      <button onClick={() => press('up')} className={btnCls}><ChevronUp size={16} color="#00d4ff" /></button>
+      <button onClick={() => press('up')} className={btnCls} aria-label="Tilt mirror up"><ChevronUp size={16} color="#00d4ff" /></button>
       <div className="flex gap-1">
-        <button onClick={() => press('left')} className={btnCls}><ChevronLeft size={16} color="#00d4ff" /></button>
+        <button onClick={() => press('left')} className={btnCls} aria-label="Tilt mirror left"><ChevronLeft size={16} color="#00d4ff" /></button>
         <div className="w-10 h-10 rounded-xl bg-white/5 border border-white/8" />
-        <button onClick={() => press('right')} className={btnCls}><ChevronRight size={16} color="#00d4ff" /></button>
+        <button onClick={() => press('right')} className={btnCls} aria-label="Tilt mirror right"><ChevronRight size={16} color="#00d4ff" /></button>
       </div>
-      <button onClick={() => press('down')} className={btnCls}><ChevronDown size={16} color="#00d4ff" /></button>
+      <button onClick={() => press('down')} className={btnCls} aria-label="Tilt mirror down"><ChevronDown size={16} color="#00d4ff" /></button>
     </div>
   )
 }
@@ -126,23 +126,21 @@ function SensorDiagram({ frontActive, rearActive }) {
 // ── Hotspot card components ───────────────────────────────────────────────────
 function HeadlightCard() {
   const { setHeadlightMode } = useCarState()
-  const [drl, setDrl] = useState(false)
-  const [highBeam, setHigh] = useState(false)
+  const headlightMode = useCarState(s => s.headlightMode)
+  // Derived from the live light mode — survives card close/reopen
+  const drl      = headlightMode === 'drl'
+  const highBeam = headlightMode === 'high'
   const [auto, setAuto] = useState(true)
   const [adaptive, setAdaptive] = useState(true)
   const [projector, setProjector] = useState('sport')
   const [brightness, setBrightness] = useState(85)
 
   const handleDrlToggle = (newState) => {
-    setDrl(newState)
-    setHigh(false)
     setHeadlightMode(newState ? 'drl' : 'off')
   }
 
   const handleHighBeamToggle = (newState) => {
-    setHigh(newState)
-    if (newState) { setDrl(false); setHeadlightMode('high') }
-    else setHeadlightMode(drl ? 'drl' : 'off')
+    setHeadlightMode(newState ? 'high' : drl ? 'drl' : 'off')
   }
 
   return (
@@ -183,22 +181,23 @@ function AdasCard() {
 
 function WiperCard() {
   const { triggerAnimation, wiperSpeed, setWiperSpeed, rearWiperSpeed, setRearWiperSpeed } = useCarState()
+  const animationStates = useCarState(s => s.animationStates)
   const [rainSense, setRainSense] = useState(true)
   const [heated, setHeated] = useState(false)
-  const [wipersOn, setWipersOn] = useState(false)
-  const [rearWiperOn, setRearWiperOn] = useState(false)
+  // Single source of truth: the live 3D animation state, never a local shadow copy
+  const wipersOn    = animationStates.wiper_front_left
+  const rearWiperOn = animationStates.wiper_rear
+  const washTimer   = useRef(null)
+  useEffect(() => () => clearTimeout(washTimer.current), [])
 
   const toggleFrontWipers = () => {
     const newState = !wipersOn
-    setWipersOn(newState)
     triggerAnimation('wiper_front_left', newState)
     triggerAnimation('wiper_front_right', newState)
   }
 
   const toggleRearWiper = () => {
-    const newState = !rearWiperOn
-    setRearWiperOn(newState)
-    triggerAnimation('wiper_rear', newState)
+    triggerAnimation('wiper_rear', !rearWiperOn)
   }
 
   return (
@@ -213,11 +212,10 @@ function WiperCard() {
       <Toggle label="Heated Washer Nozzles" value={heated} onChange={setHeated} sub="Prevents freezing" />
       <div className="pt-2">
         <ActionBtn label="Wash & Wipe (front)" variant="primary" onClick={() => {
-          setWipersOn(true)
+          clearTimeout(washTimer.current)
           triggerAnimation('wiper_front_left', true)
           triggerAnimation('wiper_front_right', true)
-          setTimeout(() => {
-            setWipersOn(false)
+          washTimer.current = setTimeout(() => {
             triggerAnimation('wiper_front_left', false)
             triggerAnimation('wiper_front_right', false)
           }, 2000)
@@ -229,7 +227,7 @@ function WiperCard() {
 
 function MirrorCard({ hotspot }) {
   const { triggerAnimation, nudgeMirrorTilt } = useCarState()
-  const [fold, setFold] = useState(false)
+  const fold = useCarState(s => s.animationStates[hotspot])
   const [heat, setHeat] = useState(true)
   const [autoFold, setAutoFold] = useState(true)
   const [bsm, setBsm] = useState(true)
@@ -240,7 +238,6 @@ function MirrorCard({ hotspot }) {
   const STEP = 0.15
 
   const handleFoldToggle = (newState) => {
-    setFold(newState)
     triggerAnimation(hotspot, newState)
     // Fold is an exterior operation — make sure the camera is outside watching the pod swing
     flyTo(hotspot)
@@ -290,21 +287,19 @@ function BumperCard() {
 
 function FoglightCard() {
   const { triggerAnimation } = useCarState()
-  const [frontFog, setFrontFog] = useState(false)
-  const [rearFog, setRearFog] = useState(false)
+  const frontFog = useCarState(s => s.animationStates.foglight_l)
+  const rearFog  = useCarState(s => s.animationStates.foglight_rear)
   const [corner, setCorner] = useState('auto')
   const [autoFog, setAutoFog] = useState(true)
   const [intensity, setIntensity] = useState(80)
 
   const handleFrontFog = (v) => {
-    setFrontFog(v)
     triggerAnimation('foglight_l', v)
     triggerAnimation('foglight_r', v)
   }
+  // Rear fog drives its own dedicated lamp — independent of the front pair
   const handleRearFog = (v) => {
-    setRearFog(v)
-    triggerAnimation('foglight_l', v)
-    triggerAnimation('foglight_r', v)
+    triggerAnimation('foglight_rear', v)
   }
 
   return (
@@ -322,13 +317,12 @@ function FoglightCard() {
 
 function SunroofCard() {
   const { triggerAnimation } = useCarState()
+  const pos = useCarState(s => s.animationStates.sunroof)
   const [shade, setShade] = useState(false)
   const [deflector, setDeflector] = useState(true)
   const [rainClose, setRainClose] = useState(true)
-  const [pos, setPos] = useState(0)
 
   const handleSunroofPosition = (newPos) => {
-    setPos(newPos)
     triggerAnimation('sunroof', newPos) // 0 = closed, 1 = tilted, 2 = open
   }
 
@@ -358,20 +352,27 @@ function SunroofCard() {
 
 function DoorCard() {
   const { setDoorsOpen, doorsOpen, triggerAnimation } = useCarState()
+  const animationStates = useCarState(s => s.animationStates)
   const { playDoorOpen, playDoorClose, playWindowSlide } = useSoundFX()
   const [locked, setLocked] = useState(true)
   const [childLock, setChildLock] = useState(false)
   const [autoLock, setAutoLock] = useState(true)
   const [approach, setApproach] = useState(false)
-  const [windows, setWindows] = useState({ fl: 0, fr: 0, rl: 0, rr: 0 })
-  const [doorStates, setDoorStates] = useState({ fl: false, fr: false, rl: false, rr: false })
+  // Single source of truth: live 3D state, no local shadow copies
+  const doorStates = {
+    fl: animationStates.door_fl, fr: animationStates.door_fr,
+    rl: animationStates.door_rl, rr: animationStates.door_rr,
+  }
+  const windows = {
+    fl: animationStates.window_fl, fr: animationStates.window_fr,
+    rl: animationStates.window_rl, rr: animationStates.window_rr,
+  }
 
   const toggleDoor = (key) => {
     const next = !doorStates[key]
-    const newStates = { ...doorStates, [key]: next }
-    setDoorStates(newStates)
     triggerAnimation(`door_${key}`, next)
     // Keep global doorsOpen in sync with the actual per-door state
+    const newStates = { ...doorStates, [key]: next }
     const allOpen   = Object.values(newStates).every(Boolean)
     const allClosed = Object.values(newStates).every(v => !v)
     if (allOpen)   setDoorsOpen(true)
@@ -381,14 +382,12 @@ function DoorCard() {
 
   const handleOpenAllDoors = () => {
     setDoorsOpen(true)
-    setDoorStates({ fl: true, fr: true, rl: true, rr: true })
     ;['fl','fr','rl','rr'].forEach(k => triggerAnimation(`door_${k}`, true))
     playDoorOpen()
   }
 
   const handleCloseAllDoors = () => {
     setDoorsOpen(false)
-    setDoorStates({ fl: false, fr: false, rl: false, rr: false })
     ;['fl','fr','rl','rr'].forEach(k => triggerAnimation(`door_${k}`, false))
     playDoorClose()
   }
@@ -427,7 +426,6 @@ function DoorCard() {
       <div className="py-2 border-b border-white/5 flex gap-2">
         <button
           onClick={() => {
-            setWindows({ fl: 0, fr: 0, rl: 0, rr: 0 })
             ;['fl','fr','rl','rr'].forEach(k => triggerAnimation(`window_${k}`, 0))
             playWindowSlide()
           }}
@@ -437,7 +435,6 @@ function DoorCard() {
         </button>
         <button
           onClick={() => {
-            setWindows({ fl: 100, fr: 100, rl: 100, rr: 100 })
             ;['fl','fr','rl','rr'].forEach(k => triggerAnimation(`window_${k}`, 100))
             playWindowSlide()
           }}
@@ -455,9 +452,7 @@ function DoorCard() {
           <input
             type="range" min={0} max={100} value={windows[key]}
             onChange={e => {
-              const v = Number(e.target.value)
-              setWindows(p => ({ ...p, [key]: v }))
-              triggerAnimation(`window_${key}`, v)
+              triggerAnimation(`window_${key}`, Number(e.target.value))
             }}
             onMouseUp={() => playWindowSlide()}
             style={{ accentColor: '#00d4ff' }}
@@ -465,13 +460,13 @@ function DoorCard() {
           />
           <div className="flex gap-2">
             <button
-              onClick={() => { setWindows(p => ({ ...p, [key]: 0 })); triggerAnimation(`window_${key}`, 0); playWindowSlide() }}
+              onClick={() => { triggerAnimation(`window_${key}`, 0); playWindowSlide() }}
               className="flex-1 py-1.5 rounded-lg text-xs font-medium bg-white/5 border border-white/10 text-white/50 hover:bg-white/10 transition-all"
             >
               Close
             </button>
             <button
-              onClick={() => { setWindows(p => ({ ...p, [key]: 100 })); triggerAnimation(`window_${key}`, 100); playWindowSlide() }}
+              onClick={() => { triggerAnimation(`window_${key}`, 100); playWindowSlide() }}
               className="flex-1 py-1.5 rounded-lg text-xs font-medium bg-cyan-500/20 border border-cyan-400/40 text-cyan-300 hover:bg-cyan-500/30 transition-all"
             >
               Open
@@ -505,6 +500,7 @@ function AcVentCard() {
         <div className="flex gap-1">
           {Array.from({ length: 7 }, (_, i) => (
             <button key={i} onClick={() => setClimateProp('fanSpeed', i + 1)}
+              aria-label={`Fan speed ${i + 1}`}
               className="flex-1 h-7 rounded-md transition-all"
               style={{ background: i < fanSpeed ? '#00d4ff' : 'rgba(255,255,255,0.08)', boxShadow: i < fanSpeed ? '0 0 6px rgba(0,212,255,0.4)' : 'none' }} />
           ))}
@@ -518,8 +514,10 @@ function AcVentCard() {
   )
 }
 
-function SeatCard() {
-  const { seatDriver, setSeatDriver } = useCarState()
+function SeatCard({ side = 'driver' }) {
+  // Each seat has its own store slice — passenger card no longer moves the driver seat
+  const seat    = useCarState(s => side === 'driver' ? s.seatDriver : s.seatPassenger)
+  const setSeat = useCarState(s => side === 'driver' ? s.setSeatDriver : s.setSeatPassenger)
   const [mem, setMem] = useState(null)
   const [saved, setSaved] = useState(false)
   const [lumbar, setLumbar] = useState(3)
@@ -553,9 +551,9 @@ function SeatCard() {
           {saved ? 'Saved ✓' : 'Save'}
         </button>
       </div>
-      <Slider label="Fore / Aft" value={seatDriver.foreAft} onChange={v => setSeatDriver('foreAft', v)} unit="" />
-      <Slider label="Height" value={seatDriver.height} onChange={v => setSeatDriver('height', v)} unit="" />
-      <Slider label="Backrest Angle" value={seatDriver.recline} onChange={v => setSeatDriver('recline', v)} unit="°" />
+      <Slider label="Fore / Aft" value={seat.foreAft} onChange={v => setSeat('foreAft', v)} unit="" />
+      <Slider label="Height" value={seat.height} onChange={v => setSeat('height', v)} unit="" />
+      <Slider label="Backrest Angle" value={seat.recline} onChange={v => setSeat('recline', v)} unit="°" />
       <Slider label="Lumbar Support" value={lumbar} onChange={setLumbar} min={0} max={6} unit="" />
       <ButtonGroup label="Seat Ventilation" options={[{label:'Off',value:'off'},{label:'Low',value:'low'},{label:'High',value:'high'}]} value={vent} onChange={setVent} />
       <ButtonGroup label="Seat Heating" options={[{label:'Off',value:'off'},{label:'1',value:'1'},{label:'2',value:'2'},{label:'3',value:'3'}]} value={heat} onChange={setHeat} />
@@ -628,6 +626,7 @@ function AmbientCard() {
         <div className="flex gap-2 flex-wrap">
           {COLORS.map((c, i) => (
             <button key={i} onClick={() => setAmbientColor(c)}
+              aria-label={`Ambient colour ${c}`}
               className={`w-8 h-8 rounded-full border-2 transition-all ${ambientColor === c ? 'scale-110 shadow-lg' : 'border-transparent'}`}
               style={{ background: c, borderColor: ambientColor === c ? '#ffffff' : 'transparent', boxShadow: ambientColor === c ? `0 0 10px ${c}` : 'none' }} />
           ))}
@@ -640,9 +639,10 @@ function AmbientCard() {
 }
 
 function InstrumentCard() {
+  const unit    = useCarState(s => s.speedUnit)
+  const setUnit = useCarState(s => s.setSpeedUnit)
   const [dispMode, setDispMode] = useState('normal')
   const [bright, setBright] = useState(80)
-  const [unit, setUnit] = useState('kmh')
   return (
     <div>
       <ButtonGroup label="Display Mode" options={[{label:'Normal',value:'normal'},{label:'Sport',value:'sport'},{label:'Eco',value:'eco'},{label:'Custom',value:'custom'}]} value={dispMode} onChange={setDispMode} />
@@ -706,18 +706,17 @@ function OverheadCard() {
 
 function TaillightCard() {
   const { triggerAnimation, setBrakeLightMode } = useCarState()
-  const [brake, setBrake] = useState('standard')
+  const taillightsOn = useCarState(s => s.animationStates.taillight_l)
+  const brakeLightMode = useCarState(s => s.brakeLightMode)
+  const brake = brakeLightMode === 'sequential' ? 'seq' : brakeLightMode
   const [ambient, setAmbient] = useState(true)
-  const [taillightsOn, setTaillightsOn] = useState(false)
 
   const handleTaillightsToggle = (newState) => {
-    setTaillightsOn(newState)
     triggerAnimation('taillight_l', newState)
     triggerAnimation('taillight_r', newState)
   }
 
   const handleBrakeMode = (mode) => {
-    setBrake(mode)
     setBrakeLightMode(mode === 'seq' ? 'sequential' : mode)
   }
 
@@ -745,7 +744,7 @@ function BootCard() {
   const [damping, setDamping] = useState(50)
   const [light, setLight] = useState(true)
   const [proximity, setProximity] = useState(true)
-  const [bootOpen, setBootOpen] = useState(false)
+  const bootOpen = useCarState(s => s.animationStates.boot)
 
   return (
     <div>
@@ -753,8 +752,8 @@ function BootCard() {
       <div className="py-2 border-b border-white/5">
         <div className="text-xs text-white/60 mb-2">Boot Position</div>
         <div className="flex gap-2">
-          <ActionBtn label="Open" variant="primary" onClick={() => { setBootOpen(true); triggerAnimation('boot', true); playBootOpen() }} />
-          <ActionBtn label="Close" onClick={() => { setBootOpen(false); triggerAnimation('boot', false); playDoorClose() }} />
+          <ActionBtn label="Open" variant="primary" onClick={() => { triggerAnimation('boot', true); playBootOpen() }} />
+          <ActionBtn label="Close" onClick={() => { triggerAnimation('boot', false); playDoorClose() }} />
         </div>
       </div>
       <ButtonGroup label="Open Mode" options={[{label:'Normal',value:'normal'},{label:'Soft',value:'soft'},{label:'Maximum',value:'max'}]} value={openMode} onChange={setOpenMode} />
@@ -764,7 +763,7 @@ function BootCard() {
       <Toggle label="Proximity Unlock" value={proximity} onChange={setProximity} sub="Open boot near vehicle" />
       <div className="mt-2 p-3 rounded-xl bg-white/3 border border-white/8">
         <div className="text-[10px] text-white/40">Cargo Space: 506L</div>
-        <div className="text-[10px] text-white/40 mt-1">Status: Closed & Locked</div>
+        <div className="text-[10px] text-white/40 mt-1">Status: {bootOpen ? 'Open' : 'Closed & Locked'}</div>
       </div>
     </div>
   )
@@ -777,7 +776,7 @@ function HoodCard() {
   const [damping, setDamping] = useState(60)
   const [autoClose, setAutoClose] = useState(false)
   const [light, setLight] = useState(true)
-  const [hoodOpen, setHoodOpen] = useState(false)
+  const hoodOpen = useCarState(s => s.animationStates.bonnet)
 
   return (
     <div>
@@ -785,8 +784,8 @@ function HoodCard() {
       <div className="py-2 border-b border-white/5">
         <div className="text-xs text-white/60 mb-2">Hood Position</div>
         <div className="flex gap-2">
-          <ActionBtn label="Open" variant="primary" onClick={() => { setHoodOpen(true); triggerAnimation('bonnet', true); playBonnetOpen() }} />
-          <ActionBtn label="Close" onClick={() => { setHoodOpen(false); triggerAnimation('bonnet', false); playBonnetOpen() }} />
+          <ActionBtn label="Open" variant="primary" onClick={() => { triggerAnimation('bonnet', true); playBonnetOpen() }} />
+          <ActionBtn label="Close" onClick={() => { triggerAnimation('bonnet', false); playBonnetOpen() }} />
         </div>
       </div>
       <ButtonGroup label="Open Mode" options={[{label:'Normal',value:'normal'},{label:'Soft',value:'soft'},{label:'Service',value:'service'}]} value={openMode} onChange={setOpenMode} />
@@ -795,7 +794,7 @@ function HoodCard() {
       <Toggle label="Hood Light" value={light} onChange={setLight} />
       <div className="mt-2 p-3 rounded-xl bg-white/3 border border-white/8">
         <div className="text-[10px] text-white/40">Engine: 1.5L i-VTEC</div>
-        <div className="text-[10px] text-white/40 mt-1">Status: Closed & Secure</div>
+        <div className="text-[10px] text-white/40 mt-1">Status: {hoodOpen ? 'Open' : 'Closed & Secure'}</div>
       </div>
     </div>
   )
@@ -821,8 +820,8 @@ const CARD_MAP = {
   boot:          BootCard,
   bonnet:        HoodCard,
   ac_vent:       AcVentCard,
-  seat_driver:    SeatCard,
-  seat_passenger: SeatCard,
+  seat_driver:    (p) => <SeatCard {...p} side="driver" />,
+  seat_passenger: (p) => <SeatCard {...p} side="passenger" />,
   steering:      SteeringCard,
   infotainment:  InfotainmentCard,
   ambient:       AmbientCard,
@@ -841,8 +840,11 @@ export default function ControlOverlay() {
 
   function handleClose() {
     playUIClose()
+    const wasInterior = meta?.view === 'interior'
     clearHotspot()
-    resetCamera()
+    // Interior cards return to the cabin view, not the exterior default
+    if (wasInterior) flyTo('interior')
+    else resetCamera()
   }
 
   return (

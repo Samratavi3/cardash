@@ -109,9 +109,19 @@ function GrabHandle({ position }) {
 }
 
 // ── Seat ──────────────────────────────────────────────────────────────────────
-function Seat({ name, position }) {
+function Seat({ name, position, state }) {
+  // Live seat adjustment from the store (defaults match the store's initial values)
+  const { foreAft = 50, height = 50, recline = 20 } = state || {}
+  const pos = [
+    position[0],
+    position[1] + (height - 50) * 0.002,
+    position[2] - (foreAft - 50) * 0.005,
+  ]
+  // recline 0–100 → backrest −0.06…−0.46 rad (default 20 reproduces the original −0.14)
+  const backAngle = -0.14 - ((recline - 20) / 100) * 0.40
+
   return (
-    <InteriorMesh name={name} position={position}>
+    <InteriorMesh name={name} position={pos}>
       {/* Base cushion */}
       <mesh castShadow>
         <boxGeometry args={[0.52, 0.10, 0.52]} />
@@ -122,20 +132,6 @@ function Seat({ name, position }) {
         <boxGeometry args={[0.46, 0.06, 0.46]} />
         <meshStandardMaterial color={C.seat_cushion} roughness={0.90} metalness={0} />
       </mesh>
-      {/* Seat back */}
-      <mesh position={[0, 0.36, -0.23]} rotation={[-0.14, 0, 0]} castShadow>
-        <boxGeometry args={[0.50, 0.70, 0.09]} />
-        <meshStandardMaterial color={C.seat_body} roughness={0.86} metalness={0} />
-      </mesh>
-      {/* Back bolsters */}
-      <mesh position={[ 0.23, 0.36, -0.23]} rotation={[-0.14, 0, 0]}>
-        <boxGeometry args={[0.07, 0.52, 0.10]} />
-        <meshStandardMaterial color={C.seat_bolster} roughness={0.86} />
-      </mesh>
-      <mesh position={[-0.23, 0.36, -0.23]} rotation={[-0.14, 0, 0]}>
-        <boxGeometry args={[0.07, 0.52, 0.10]} />
-        <meshStandardMaterial color={C.seat_bolster} roughness={0.86} />
-      </mesh>
       {/* Base bolsters */}
       <mesh position={[ 0.26, 0.02, 0]} castShadow>
         <boxGeometry args={[0.04, 0.14, 0.44]} />
@@ -145,28 +141,46 @@ function Seat({ name, position }) {
         <boxGeometry args={[0.04, 0.14, 0.44]} />
         <meshStandardMaterial color={C.seat_bolster} roughness={0.86} />
       </mesh>
-      {/* Headrest */}
-      <mesh position={[0, 0.76, -0.25]} castShadow>
-        <boxGeometry args={[0.30, 0.19, 0.11]} />
-        <meshStandardMaterial color={C.seat_body} roughness={0.86} />
-      </mesh>
-      {/* Headrest posts */}
-      {[-0.085, 0.085].map((x, i) => (
-        <mesh key={i} position={[x, 0.58, -0.23]}>
-          <cylinderGeometry args={[0.007, 0.007, 0.19, 6]} />
-          <meshStandardMaterial color={C.dark_chrome} metalness={0.8} roughness={0.2} />
-        </mesh>
-      ))}
-      {/* Stitching — back */}
-      <mesh position={[0, 0.36, -0.183]}>
-        <boxGeometry args={[0.005, 0.60, 0.004]} />
-        <meshStandardMaterial color={C.stitch} emissive={C.stitch_e} emissiveIntensity={0.35} />
-      </mesh>
       {/* Stitching — cushion */}
       <mesh position={[0, 0.063, 0.06]}>
         <boxGeometry args={[0.44, 0.003, 0.005]} />
         <meshStandardMaterial color={C.stitch} emissive={C.stitch_e} emissiveIntensity={0.35} />
       </mesh>
+
+      {/* BACKREST GROUP — pivots at the cushion rear so recline animates */}
+      <group position={[0, 0.06, -0.20]} rotation={[backAngle, 0, 0]}>
+        {/* Seat back */}
+        <mesh position={[0, 0.30, -0.03]} castShadow>
+          <boxGeometry args={[0.50, 0.70, 0.09]} />
+          <meshStandardMaterial color={C.seat_body} roughness={0.86} metalness={0} />
+        </mesh>
+        {/* Back bolsters */}
+        <mesh position={[ 0.23, 0.30, -0.03]}>
+          <boxGeometry args={[0.07, 0.52, 0.10]} />
+          <meshStandardMaterial color={C.seat_bolster} roughness={0.86} />
+        </mesh>
+        <mesh position={[-0.23, 0.30, -0.03]}>
+          <boxGeometry args={[0.07, 0.52, 0.10]} />
+          <meshStandardMaterial color={C.seat_bolster} roughness={0.86} />
+        </mesh>
+        {/* Headrest */}
+        <mesh position={[0, 0.70, -0.05]} castShadow>
+          <boxGeometry args={[0.30, 0.19, 0.11]} />
+          <meshStandardMaterial color={C.seat_body} roughness={0.86} />
+        </mesh>
+        {/* Headrest posts */}
+        {[-0.085, 0.085].map((x, i) => (
+          <mesh key={i} position={[x, 0.52, -0.03]}>
+            <cylinderGeometry args={[0.007, 0.007, 0.19, 6]} />
+            <meshStandardMaterial color={C.dark_chrome} metalness={0.8} roughness={0.2} />
+          </mesh>
+        ))}
+        {/* Stitching — back */}
+        <mesh position={[0, 0.30, 0.017]}>
+          <boxGeometry args={[0.005, 0.60, 0.004]} />
+          <meshStandardMaterial color={C.stitch} emissive={C.stitch_e} emissiveIntensity={0.35} />
+        </mesh>
+      </group>
     </InteriorMesh>
   )
 }
@@ -252,6 +266,9 @@ export default function InteriorModel() {
   const isDayMode         = useCarState(s => s.isDayMode)
   const ambientColor      = useCarState(s => s.ambientColor)
   const ambientBrightness = useCarState(s => s.ambientBrightness)
+  const seatDriver        = useCarState(s => s.seatDriver)
+  const seatPassenger     = useCarState(s => s.seatPassenger)
+  const steeringPos       = useCarState(s => s.steeringPos)
 
   const glassM = useMemo(() => new THREE.MeshPhysicalMaterial({
     color: '#8ab0c8', metalness: 0, roughness: 0.04,
@@ -531,8 +548,14 @@ export default function InteriorModel() {
       <AcVentGroup name="ac_vent_c" position={[ 0.100, 1.068, 1.640]} />
       <AcVentGroup name="ac_vent_r" position={[ 0.440, 1.068, 1.640]} />
 
-      {/* ── STEERING WHEEL ────────────────────────────────────────────────── */}
-      <InteriorMesh name="steering_wheel" position={[-0.37, 1.12, 1.22]}>
+      {/* ── STEERING WHEEL — tilt raises/lowers, reach pulls toward driver ── */}
+      <InteriorMesh
+        name="steering_wheel"
+        position={[
+          -0.37,
+          1.12 + (steeringPos.tilt - 50) * 0.002,
+          1.22 - (steeringPos.reach - 50) * 0.002,
+        ]}>
         {/* Rim */}
         <mesh rotation={[Math.PI / 2 - 0.28, 0, 0]}>
           <torusGeometry args={[0.185, 0.023, 10, 40]} />
@@ -646,9 +669,9 @@ export default function InteriorModel() {
           emissiveIntensity={ambientEI * 0.45} toneMapped={false} />
       </mesh>
 
-      {/* ── FRONT SEATS ───────────────────────────────────────────────────── */}
-      <Seat name="seat_driver"    position={[-0.38, 0.30, 0.45]} />
-      <Seat name="seat_passenger" position={[ 0.38, 0.30, 0.45]} />
+      {/* ── FRONT SEATS — driven by per-seat store state ─────────────────── */}
+      <Seat name="seat_driver"    position={[-0.38, 0.30, 0.45]} state={seatDriver} />
+      <Seat name="seat_passenger" position={[ 0.38, 0.30, 0.45]} state={seatPassenger} />
 
       {/* ── REAR SEATS ────────────────────────────────────────────────────── */}
       <mesh position={[0, 0.34, -0.52]} castShadow>
@@ -764,3 +787,4 @@ export default function InteriorModel() {
     </group>
   )
 }
+// NOTE: seats + steering wheel here are the single source of truth (RHD) — VehicleModel no longer duplicates them

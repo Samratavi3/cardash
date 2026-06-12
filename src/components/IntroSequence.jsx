@@ -16,9 +16,19 @@ export function useIntroSequence() {
 
     // Small delay to let the scene settle after first render
     const timers = []
+    const startedAt = performance.now()
 
-    const timeout = setTimeout(async () => {
-      if (!cameraRig.controls) return
+    const runIntro = async () => {
+      // Controls may not exist yet on slow scene/HDRI loads — retry every 250 ms.
+      // After 15 s give up gracefully so the app never hangs on the overlay.
+      if (!cameraRig.controls) {
+        if (performance.now() - startedAt < 15000) {
+          timers.push(setTimeout(runIntro, 250))
+        } else {
+          setIntroComplete()
+        }
+        return
+      }
 
       const intro = CAMERA_POSITIONS.intro_start
       const def   = CAMERA_POSITIONS.default
@@ -43,10 +53,10 @@ export function useIntroSequence() {
       }
 
       // Signal panels to appear after orbit
-      const inner = setTimeout(() => setIntroComplete(), 2400)
-      timers.push(inner)
-    }, 600)
-    timers.push(timeout)
+      timers.push(setTimeout(() => setIntroComplete(), 2400))
+    }
+
+    timers.push(setTimeout(runIntro, 600))
 
     return () => timers.forEach(clearTimeout)
   }, [setIntroComplete])

@@ -37,11 +37,12 @@ function ArcGauge({ value, max, color, startAngle = 150, size = 200, children })
 }
 
 // ── Speedometer (same on all sizes, just SVG scaled) ─────────────────────────
-function Speedometer({ speed, size = 220 }) {
-  const pct = speed / 120
+function Speedometer({ speed, size = 220, unit = 'kmh' }) {
+  // speed arrives in km/h; convert for display + gauge when mph selected
+  const displaySpeed = unit === 'mph' ? Math.round(speed * 0.621371) : speed
+  const pct = Math.min(displaySpeed / 120, 1)
   const fillLen = pct * SWEEP_LEN
   const needleDeg = 150 + pct * 240
-  const { x: nx, y: ny } = polarToXY(needleDeg, 62)
 
   return (
     <div className="flex items-center justify-center">
@@ -78,15 +79,24 @@ function Speedometer({ speed, size = 220 }) {
           transform={`rotate(150 ${CX} ${CY})`}
           style={{ transition: 'stroke-dasharray 0.3s ease, stroke 0.5s ease' }}
           filter="drop-shadow(0 0 8px rgba(0,212,255,0.7))" />
-        <line x1={CX} y1={CY} x2={nx} y2={ny}
-          stroke="#ffffff" strokeWidth="1.5" strokeLinecap="round"
-          style={{ transition: 'x2 0.3s, y2 0.3s', filter: 'drop-shadow(0 0 4px rgba(255,255,255,0.8))' }} />
+        {/* Needle — rotated group, since SVG x2/y2 attributes are not CSS-transitionable */}
+        <g style={{
+          transform: `rotate(${needleDeg}deg)`,
+          transformOrigin: `${CX}px ${CY}px`,
+          transition: 'transform 0.3s cubic-bezier(.34,1.2,.64,1)',
+        }}>
+          <line x1={CX} y1={CY} x2={CX} y2={CY - 62}
+            stroke="#ffffff" strokeWidth="1.5" strokeLinecap="round"
+            style={{ filter: 'drop-shadow(0 0 4px rgba(255,255,255,0.8))' }} />
+        </g>
         <circle cx={CX} cy={CY} r="4" fill="#00d4ff" filter="drop-shadow(0 0 6px #00d4ff)" />
         <text x={CX} y={CY + 22} textAnchor="middle" fill="white"
           fontSize="22" fontWeight="700" fontFamily="Inter, sans-serif"
-          style={{ filter: 'drop-shadow(0 0 8px rgba(255,255,255,0.4))' }}>{speed}</text>
+          style={{ filter: 'drop-shadow(0 0 8px rgba(255,255,255,0.4))' }}>{displaySpeed}</text>
         <text x={CX} y={CY + 34} textAnchor="middle"
-          fill="rgba(255,255,255,0.5)" fontSize="7" fontFamily="Inter, sans-serif">MPH</text>
+          fill="rgba(255,255,255,0.5)" fontSize="7" fontFamily="Inter, sans-serif">
+          {unit === 'mph' ? 'MPH' : 'km/h'}
+        </text>
       </svg>
     </div>
   )
@@ -184,8 +194,10 @@ const ADAS_KEYS = [
 
 // ── Main component ────────────────────────────────────────────────────────────
 export default function DriverCluster() {
-  const adasState = useCarState(s => s.adasState)
-  const config    = useScreenConfig()
+  const adasState       = useCarState(s => s.adasState)
+  const speedUnit       = useCarState(s => s.speedUnit)
+  const isIntroComplete = useCarState(s => s.isIntroComplete)
+  const config          = useScreenConfig()
 
   const [speed, setSpeed] = useState(65)
   const [rpm,   setRpm  ] = useState(2400)
@@ -223,8 +235,8 @@ export default function DriverCluster() {
     return (
       <motion.div
         initial={{ opacity: 0, x: -20 }}
-        animate={{ opacity: 1, x: 0 }}
-        transition={{ duration: 0.7, delay: 4.6 }}
+        animate={isIntroComplete ? { opacity: 1, x: 0 } : { opacity: 0, x: -20 }}
+        transition={{ duration: 0.7, delay: 0.3 }}
         className="h-full flex flex-col gap-2 overflow-y-auto scrollbar-none py-3 px-2"
       >
         {/* Compact header — single row */}
@@ -244,7 +256,7 @@ export default function DriverCluster() {
 
         {/* Speedometer — centered, sized to fit */}
         <div className="flex items-center justify-center flex-shrink-0">
-          <Speedometer speed={Math.round(speed)} size={config.speedometerSize} />
+          <Speedometer speed={Math.round(speed)} size={config.speedometerSize} unit={speedUnit} />
         </div>
 
         {/* Gear + ODO — tight row */}
@@ -269,8 +281,8 @@ export default function DriverCluster() {
   return (
     <motion.div
       initial={{ opacity: 0, x: -30 }}
-      animate={{ opacity: 1, x: 0 }}
-      transition={{ duration: 0.8, delay: 4.6, ease: [0.25, 0.46, 0.45, 0.94] }}
+      animate={isIntroComplete ? { opacity: 1, x: 0 } : { opacity: 0, x: -30 }}
+      transition={{ duration: 0.8, delay: 0.3, ease: [0.25, 0.46, 0.45, 0.94] }}
       className="h-full flex flex-col gap-3 overflow-y-auto scrollbar-none py-4 px-4"
     >
       {/* Header */}
@@ -289,7 +301,7 @@ export default function DriverCluster() {
 
       {/* Speedometer */}
       <div className="flex items-center justify-center">
-        <Speedometer speed={Math.round(speed)} size={config.speedometerSize} />
+        <Speedometer speed={Math.round(speed)} size={config.speedometerSize} unit={speedUnit} />
       </div>
 
       {/* Gear + ODO */}

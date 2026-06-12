@@ -14,6 +14,7 @@ const INITIAL_ANIMATION_STATES = {
   taillight_r: false,
   foglight_l: false,
   foglight_r: false,
+  foglight_rear: false,
   wiper_front_left: false,
   wiper_front_right: false,
   wiper_rear: false,
@@ -65,10 +66,13 @@ export const useCarState = create((set) => ({
   ambientColor: '#00d4ff',
   ambientBrightness: 70,
 
-  // Seat positions — driver seat animatable in 3D
+  // Seat positions — both front seats animatable in 3D
   seatDriver: { foreAft: 50, height: 50, recline: 20 },
   setSeatDriver: (key, val) =>
     set((s) => ({ seatDriver: { ...s.seatDriver, [key]: val } })),
+  seatPassenger: { foreAft: 50, height: 50, recline: 20 },
+  setSeatPassenger: (key, val) =>
+    set((s) => ({ seatPassenger: { ...s.seatPassenger, [key]: val } })),
 
   // Steering wheel position — tilt and reach animatable in 3D
   steeringPos: { tilt: 50, reach: 50 },
@@ -82,6 +86,10 @@ export const useCarState = create((set) => ({
   // Brake light mode — 'standard' | 'sequential' | 'pulse'
   brakeLightMode: 'standard',
   setBrakeLightMode: (mode) => set({ brakeLightMode: mode }),
+
+  // Cluster speed unit — 'kmh' | 'mph' (wired to InstrumentCard switch)
+  speedUnit: 'kmh',
+  setSpeedUnit: (unit) => set({ speedUnit: unit }),
 
   // Mirror glass tilt — x = up/down (-1 to 1), y = left/right (-1 to 1)
   mirrorTilt: { left: { x: 0, y: 0 }, right: { x: 0, y: 0 } },

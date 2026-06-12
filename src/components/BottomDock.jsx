@@ -29,6 +29,7 @@ function ClimateSlider({ label, value, onChange, icon: Icon, color = '#00d4ff', 
 export default function BottomDock() {
   const { climateState, setClimateProp } = useCarState()
   const { driverTemp, passengerTemp, fanSpeed, acOn } = climateState
+  const isIntroComplete = useCarState(s => s.isIntroComplete)
   const config = useScreenConfig()
 
   const [playing, setPlaying] = useState(true)
@@ -39,8 +40,8 @@ export default function BottomDock() {
     return (
       <motion.div
         initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.6, delay: 4.9 }}
+        animate={isIntroComplete ? { opacity: 1, y: 0 } : { opacity: 0, y: 20 }}
+        transition={{ duration: 0.6, delay: 0.5 }}
         className="h-full glass flex items-center px-4 gap-4 overflow-hidden"
       >
         {/* Minimal media */}
@@ -85,8 +86,8 @@ export default function BottomDock() {
   return (
     <motion.div
       initial={{ opacity: 0, y: 30 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.7, delay: 4.9, ease: [0.25, 0.46, 0.45, 0.94] }}
+      animate={isIntroComplete ? { opacity: 1, y: 0 } : { opacity: 0, y: 30 }}
+      transition={{ duration: 0.7, delay: 0.5, ease: [0.25, 0.46, 0.45, 0.94] }}
       className="h-full glass flex items-center px-5 gap-6 overflow-hidden"
     >
       {/* Media section */}

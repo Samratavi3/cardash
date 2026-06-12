@@ -1,9 +1,10 @@
 import { motion, AnimatePresence } from 'framer-motion'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Palette, X, ChevronRight, Check } from 'lucide-react'
 import { useCarState } from '../hooks/useCarState'
 import { useScreenConfig } from '../hooks/useScreenConfig'
 import { PAINT_COLORS } from '../constants/paintColors'
+import { HOTSPOT_META } from '../constants/hotspots'
 
 const WHEEL_STYLES = [
   {
@@ -66,15 +67,22 @@ const WHEEL_STYLES = [
 
 export default function ConfiguratorPanel() {
   const { selectedColor, setSelectedColor, selectedWheel, setSelectedWheel, paintFinish, setPaintFinish } = useCarState()
+  const isIntroComplete = useCarState(s => s.isIntroComplete)
+  const activeHotspot   = useCarState(s => s.activeHotspot)
   const config = useScreenConfig()
   const [open, setOpen] = useState(true)
   const [tab, setTab] = useState('color') // 'color' | 'wheel'
 
+  // Auto-collapse when a right-anchored hotspot card opens — they share the same corner
+  useEffect(() => {
+    if (activeHotspot && HOTSPOT_META[activeHotspot]?.side === 'right') setOpen(false)
+  }, [activeHotspot])
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 30 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.7, delay: 5.2, ease: [0.25, 0.46, 0.45, 0.94] }}
+      animate={isIntroComplete ? { opacity: 1, y: 0 } : { opacity: 0, y: 30 }}
+      transition={{ duration: 0.7, delay: 0.7, ease: [0.25, 0.46, 0.45, 0.94] }}
       className="absolute bottom-20 right-4 z-20"
     >
       {/* Toggle button */}

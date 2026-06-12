@@ -48,6 +48,7 @@ export default function VehicleModel() {
     headlight_l_intensity: 0, headlight_r_intensity: 0,
     taillight_l_intensity: 0, taillight_r_intensity: 0,
     foglight_l_intensity: 0, foglight_r_intensity: 0,
+    foglight_rear_intensity: 0,
   });
 
   const selectedColor    = useCarState(s => s.selectedColor);
@@ -60,8 +61,6 @@ export default function VehicleModel() {
   const rearWiperSpeed   = useCarState(s => s.rearWiperSpeed);
   const ambientColor     = useCarState(s => s.ambientColor);
   const ambientBrightness = useCarState(s => s.ambientBrightness);
-  const seatDriver       = useCarState(s => s.seatDriver);
-  const steeringPos      = useCarState(s => s.steeringPos);
   const mirrorTilt       = useCarState(s => s.mirrorTilt);
   const headlightMode    = useCarState(s => s.headlightMode);
   const brakeLightMode   = useCarState(s => s.brakeLightMode);
@@ -84,7 +83,7 @@ export default function VehicleModel() {
       "mirror_left", "mirror_right",
       "headlight_l", "headlight_r",
       "taillight_l", "taillight_r",
-      "foglight_l", "foglight_r",
+      "foglight_l", "foglight_r", "foglight_rear",
       "ambient_dash", "ambient_footwell_fl", "ambient_footwell_fr",
       "ambient_door_fl", "ambient_door_fr", "ambient_door_rl", "ambient_door_rr",
       "mirror_glass_left", "mirror_glass_right",
@@ -306,8 +305,9 @@ export default function VehicleModel() {
 
     // Fog lights
     [
-      { mesh: c.foglight_l,  key: "foglight_l_intensity",  on: s.foglight_l,  maxI: 1.0 },
-      { mesh: c.foglight_r,  key: "foglight_r_intensity",  on: s.foglight_r,  maxI: 1.0 },
+      { mesh: c.foglight_l,    key: "foglight_l_intensity",    on: s.foglight_l,    maxI: 1.0 },
+      { mesh: c.foglight_r,    key: "foglight_r_intensity",    on: s.foglight_r,    maxI: 1.0 },
+      { mesh: c.foglight_rear, key: "foglight_rear_intensity", on: s.foglight_rear, maxI: 1.3 },
     ].forEach(({ mesh, key, on, maxI }) => {
       if (!mesh?.material) return;
       const diff = (on ? maxI : 0) - t[key];
@@ -1018,101 +1018,20 @@ export default function VehicleModel() {
         <meshStandardMaterial color="#1a1a1a" metalness={0.25} roughness={0.6} />
       </mesh>
 
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* STEERING WHEEL — tilt and reach driven by steeringPos state          */}
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      <group
-        position={[0.28, 1.00 + (steeringPos.tilt - 50) * 0.003, 0.60 - (steeringPos.reach - 50) * 0.003]}
-        rotation={[-0.38, 0, 0]}>
-        {/* Rim */}
-        <mesh castShadow>
-          <torusGeometry args={[0.18, 0.018, 12, 48]} />
-          <meshStandardMaterial color="#111" metalness={0.5} roughness={0.5} />
-        </mesh>
-        {/* Spokes — 3-spoke design */}
-        {[0, (2 * Math.PI) / 3, (4 * Math.PI) / 3].map((angle, i) => (
-          <mesh key={i} rotation={[0, 0, angle]} castShadow>
-            <boxGeometry args={[0.006, 0.14, 0.012]} />
-            <meshStandardMaterial color="#222" metalness={0.6} roughness={0.4} />
-          </mesh>
-        ))}
-        {/* Center hub */}
-        <mesh castShadow>
-          <cylinderGeometry args={[0.04, 0.04, 0.025, 16]} />
-          <meshStandardMaterial color="#222" metalness={0.7} roughness={0.3} />
-        </mesh>
-        {/* Column */}
-        <mesh position={[0, -0.14, 0.06]} rotation={[0.38, 0, 0]} castShadow>
-          <cylinderGeometry args={[0.022, 0.028, 0.28, 10]} />
-          <meshStandardMaterial color="#1a1a1a" metalness={0.4} roughness={0.6} />
-        </mesh>
-      </group>
+      {/* REAR FOG LAMP — single bright red unit, low in the bumper (driver side) */}
+      <mesh name="foglight_rear" position={[-0.35, 0.72, -1.99]} castShadow>
+        <boxGeometry args={[0.16, 0.07, 0.05]} />
+        <meshPhysicalMaterial
+          color="#aa2222" emissive="#ff2200" emissiveIntensity={0}
+          metalness={0.1} roughness={0.2} toneMapped={false}
+        />
+      </mesh>
 
       {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* SEATS — driver (FL), passenger (FR), rear bench                     */}
+      {/* COCKPIT — steering wheel & seats live in InteriorModel (RHD).        */}
+      {/* The duplicate LHD set that used to render here was removed: two      */}
+      {/* steering wheels on opposite sides were visible through the glass.    */}
       {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* Driver seat — fore/aft and recline driven by seatDriver state */}
-      <group name="seat_driver"
-        position={[0.30, 0.72 + (seatDriver.height - 50) * 0.002, 0.10 - (seatDriver.foreAft - 50) * 0.004]}>
-        {/* Seat base */}
-        <mesh castShadow receiveShadow>
-          <boxGeometry args={[0.50, 0.08, 0.50]} />
-          <meshStandardMaterial color="#1a1a1a" metalness={0.1} roughness={0.85} />
-        </mesh>
-        {/* Backrest — reclines on X axis */}
-        <group rotation={[-(seatDriver.recline / 100) * 0.45 - 0.08, 0, 0]} position={[0, 0.34, -0.22]}>
-          <mesh castShadow receiveShadow>
-            <boxGeometry args={[0.50, 0.60, 0.08]} />
-            <meshStandardMaterial color="#1a1a1a" metalness={0.1} roughness={0.85} />
-          </mesh>
-          {/* Headrest */}
-          <mesh position={[0, 0.38, 0.01]} castShadow>
-            <boxGeometry args={[0.28, 0.18, 0.10]} />
-            <meshStandardMaterial color="#1a1a1a" metalness={0.1} roughness={0.85} />
-          </mesh>
-        </group>
-      </group>
-      {/* Passenger seat */}
-      <group name="seat_passenger" position={[-0.30, 0.72, 0.10]}>
-        <mesh castShadow receiveShadow>
-          <boxGeometry args={[0.50, 0.08, 0.50]} />
-          <meshStandardMaterial color="#1a1a1a" metalness={0.1} roughness={0.85} />
-        </mesh>
-        <group rotation={[-0.20, 0, 0]} position={[0, 0.34, -0.22]}>
-          <mesh castShadow receiveShadow>
-            <boxGeometry args={[0.50, 0.60, 0.08]} />
-            <meshStandardMaterial color="#1a1a1a" metalness={0.1} roughness={0.85} />
-          </mesh>
-          <mesh position={[0, 0.38, 0.01]} castShadow>
-            <boxGeometry args={[0.28, 0.18, 0.10]} />
-            <meshStandardMaterial color="#1a1a1a" metalness={0.1} roughness={0.85} />
-          </mesh>
-        </group>
-      </group>
-      {/* Rear bench */}
-      <group position={[0, 0.72, -0.70]}>
-        {/* Bench base */}
-        <mesh castShadow receiveShadow>
-          <boxGeometry args={[1.10, 0.08, 0.48]} />
-          <meshStandardMaterial color="#1a1a1a" metalness={0.1} roughness={0.85} />
-        </mesh>
-        {/* Bench backrest */}
-        <group rotation={[-0.18, 0, 0]} position={[0, 0.31, -0.22]}>
-          <mesh castShadow receiveShadow>
-            <boxGeometry args={[1.10, 0.54, 0.08]} />
-            <meshStandardMaterial color="#1a1a1a" metalness={0.1} roughness={0.85} />
-          </mesh>
-          {/* Two headrests */}
-          <mesh position={[0.30, 0.36, 0.01]} castShadow>
-            <boxGeometry args={[0.26, 0.16, 0.10]} />
-            <meshStandardMaterial color="#1a1a1a" metalness={0.1} roughness={0.85} />
-          </mesh>
-          <mesh position={[-0.30, 0.36, 0.01]} castShadow>
-            <boxGeometry args={[0.26, 0.16, 0.10]} />
-            <meshStandardMaterial color="#1a1a1a" metalness={0.1} roughness={0.85} />
-          </mesh>
-        </group>
-      </group>
 
       {/* ════════════════════════════════════════════════════════════════════ */}
       {/* INTERIOR AMBIENT LIGHT STRIPS — emissive driven by ambientColor/Brightness */}
