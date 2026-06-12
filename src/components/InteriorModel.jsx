@@ -1,4 +1,5 @@
-import { useMemo } from 'react'
+import { useMemo, useEffect } from 'react'
+import { useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 import { useCarState } from '../hooks/useCarState'
 import { flyTo } from '../hooks/useCameraRig'
@@ -263,6 +264,7 @@ function DoorPanel({ xSign, ambientColor, ambientEI, glassM }) {
 
 // ── InteriorModel ─────────────────────────────────────────────────────────────
 export default function InteriorModel() {
+  const { gl }            = useThree()
   const isDayMode         = useCarState(s => s.isDayMode)
   const ambientColor      = useCarState(s => s.ambientColor)
   const ambientBrightness = useCarState(s => s.ambientBrightness)
@@ -276,6 +278,14 @@ export default function InteriorModel() {
     envMapIntensity: 2.0, transparent: true, opacity: 0.18,
     side: THREE.DoubleSide,
   }), [])
+  useEffect(() => () => glassM.dispose(), [glassM])
+
+  useEffect(() => {
+    const canvas = gl.domElement
+    const resetCursor = () => { document.body.style.cursor = 'auto' }
+    canvas.addEventListener('pointerleave', resetCursor)
+    return () => canvas.removeEventListener('pointerleave', resetCursor)
+  }, [gl])
 
   const ambientEI = (isDayMode ? 0.45 : 1.6) * (ambientBrightness / 100)
 

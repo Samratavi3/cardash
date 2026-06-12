@@ -5,7 +5,7 @@ import {
 } from 'lucide-react'
 import { useCarState } from './hooks/useCarState'
 import { useScreenConfig } from './hooks/useScreenConfig'
-import { flyTo } from './hooks/useCameraRig'
+import { flyTo, cameraRig } from './hooks/useCameraRig'
 import { useSoundFX } from './hooks/useSoundFX'
 import DriverCluster from './components/DriverCluster'
 import BottomDock from './components/BottomDock'
@@ -109,7 +109,6 @@ function CanvasToolbar() {
     isIntroComplete, clearHotspot, panoramaMode, setPanoramaMode,
   } = useCarState()
   const { playCameraMove, playUIOpen } = useSoundFX()
-  const canvasRef = useRef()
 
   function handleViewToggle() {
     playCameraMove()
@@ -133,7 +132,7 @@ function CanvasToolbar() {
   }
 
   function handleScreenshot() {
-    const canvas = document.querySelector('canvas')
+    const canvas = cameraRig.gl?.domElement ?? document.querySelector('canvas')
     if (!canvas) return
     const link = document.createElement('a')
     link.download = 'honda-city-config.png'

@@ -28,14 +28,14 @@ function Toggle({ label, value, onChange, sub, danger }) {
   )
 }
 
-function Slider({ label, value, onChange, min = 0, max = 100, unit = '%', color = '#00d4ff' }) {
+function Slider({ label, value, onChange, min = 0, max = 100, step = 1, unit = '%', color = '#00d4ff' }) {
   return (
     <div className="space-y-1.5 py-2 border-b border-white/5 last:border-0">
       <div className="flex justify-between text-xs">
         <span className="text-white/60">{label}</span>
         <span className="font-mono text-white">{value}{unit}</span>
       </div>
-      <input type="range" min={min} max={max} value={value}
+      <input type="range" min={min} max={max} step={step} value={value}
         onChange={e => onChange(Number(e.target.value))}
         style={{ accentColor: color }} className="w-full" />
     </div>
@@ -130,6 +130,7 @@ function HeadlightCard() {
   // Derived from the live light mode — survives card close/reopen
   const drl      = headlightMode === 'drl'
   const highBeam = headlightMode === 'high'
+  const priorModeRef = useRef('off')
   const [auto, setAuto] = useState(true)
   const [adaptive, setAdaptive] = useState(true)
   const [projector, setProjector] = useState('sport')
@@ -140,7 +141,12 @@ function HeadlightCard() {
   }
 
   const handleHighBeamToggle = (newState) => {
-    setHeadlightMode(newState ? 'high' : drl ? 'drl' : 'off')
+    if (newState) {
+      priorModeRef.current = headlightMode
+      setHeadlightMode('high')
+    } else {
+      setHeadlightMode(priorModeRef.current === 'drl' ? 'drl' : 'off')
+    }
   }
 
   return (
@@ -336,7 +342,7 @@ function SunroofCard() {
           <ActionBtn label="Close" onClick={() => handleSunroofPosition(0)} />
         </div>
         <div className="mt-2">
-          <Slider label="Position" value={pos * 50} onChange={v => handleSunroofPosition(Math.round(v / 50))} min={0} max={100} unit="%" />
+          <Slider label="Position" value={pos * 50} onChange={v => handleSunroofPosition(v / 50)} min={0} max={100} step={50} unit="%" />
         </div>
       </div>
       <Toggle label="Sunshade" value={shade} onChange={setShade} sub={shade ? 'Extended' : 'Retracted'} />
@@ -520,13 +526,25 @@ function SeatCard({ side = 'driver' }) {
   const setSeat = useCarState(s => side === 'driver' ? s.setSeatDriver : s.setSeatPassenger)
   const [mem, setMem] = useState(null)
   const [saved, setSaved] = useState(false)
+  const [memories, setMemories] = useState({ 1: null, 2: null, 3: null })
   const [lumbar, setLumbar] = useState(3)
   const [vent, setVent] = useState('off')
   const [heat, setHeat] = useState('off')
   const [massage, setMassage] = useState(false)
 
+  const handleMemSelect = (n) => {
+    setMem(n)
+    const snapshot = memories[n]
+    if (snapshot) {
+      setSeat('foreAft', snapshot.foreAft)
+      setSeat('height', snapshot.height)
+      setSeat('recline', snapshot.recline)
+    }
+  }
+
   const handleSave = () => {
     if (mem === null) return
+    setMemories(m => ({ ...m, [mem]: { foreAft: seat.foreAft, height: seat.height, recline: seat.recline } }))
     setSaved(true)
     setTimeout(() => setSaved(false), 1500)
   }
@@ -535,7 +553,7 @@ function SeatCard({ side = 'driver' }) {
     <div>
       <div className="flex gap-1.5 py-2 border-b border-white/5">
         {[1, 2, 3].map(n => (
-          <button key={n} onClick={() => setMem(n)}
+          <button key={n} onClick={() => handleMemSelect(n)}
             className={`flex-1 py-1.5 rounded-lg text-xs font-bold border transition-all ${mem === n ? 'bg-cyan-500/25 border-cyan-400/50 text-cyan-300' : 'bg-white/5 border-white/10 text-white/50'}`}>
             M{n}
           </button>
@@ -643,14 +661,24 @@ function InstrumentCard() {
   const setUnit = useCarState(s => s.setSpeedUnit)
   const [dispMode, setDispMode] = useState('normal')
   const [bright, setBright] = useState(80)
+  const [tripA, setTripA] = useState(42.3)
+  const [tripB, setTripB] = useState(189.7)
   return (
     <div>
       <ButtonGroup label="Display Mode" options={[{label:'Normal',value:'normal'},{label:'Sport',value:'sport'},{label:'Eco',value:'eco'},{label:'Custom',value:'custom'}]} value={dispMode} onChange={setDispMode} />
       <Slider label="Brightness" value={bright} onChange={setBright} />
       <ButtonGroup label="Speed Unit" options={[{label:'km/h',value:'kmh'},{label:'mph',value:'mph'}]} value={unit} onChange={setUnit} />
+      <div className="flex items-center justify-between py-2 border-b border-white/5">
+        <span className="text-[10px] text-white/40">Trip A</span>
+        <span className="text-xs font-mono text-white">{tripA.toFixed(1)} km</span>
+      </div>
+      <div className="flex items-center justify-between py-2 border-b border-white/5">
+        <span className="text-[10px] text-white/40">Trip B</span>
+        <span className="text-xs font-mono text-white">{tripB.toFixed(1)} km</span>
+      </div>
       <div className="flex gap-2 pt-2">
-        <ActionBtn label="Reset Trip A" />
-        <ActionBtn label="Reset Trip B" />
+        <ActionBtn label="Reset Trip A" onClick={() => setTripA(0)} />
+        <ActionBtn label="Reset Trip B" onClick={() => setTripB(0)} />
       </div>
     </div>
   )
@@ -771,7 +799,7 @@ function BootCard() {
 
 function HoodCard() {
   const { triggerAnimation } = useCarState()
-  const { playBonnetOpen } = useSoundFX()
+  const { playBonnetOpen, playDoorClose } = useSoundFX()
   const [openMode, setOpenMode] = useState('normal')
   const [damping, setDamping] = useState(60)
   const [autoClose, setAutoClose] = useState(false)
@@ -785,7 +813,7 @@ function HoodCard() {
         <div className="text-xs text-white/60 mb-2">Hood Position</div>
         <div className="flex gap-2">
           <ActionBtn label="Open" variant="primary" onClick={() => { triggerAnimation('bonnet', true); playBonnetOpen() }} />
-          <ActionBtn label="Close" onClick={() => { triggerAnimation('bonnet', false); playBonnetOpen() }} />
+          <ActionBtn label="Close" onClick={() => { triggerAnimation('bonnet', false); playDoorClose() }} />
         </div>
       </div>
       <ButtonGroup label="Open Mode" options={[{label:'Normal',value:'normal'},{label:'Soft',value:'soft'},{label:'Service',value:'service'}]} value={openMode} onChange={setOpenMode} />

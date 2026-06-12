@@ -30,7 +30,8 @@ export default function VehicleModel() {
 
   const pivotApplied = useRef(false);   // guard against StrictMode double-invoke
   const wiperPhase     = useRef(0);     // continuous phase for front wiper oscillation
-  const rearWiperPhase = useRef(0);     // continuous phase for rear wiper oscillation
+  const rearWiperPhase  = useRef(0);     // continuous phase for rear wiper oscillation
+  const prevAmbientRef  = useRef({ color: '', brightness: -1 });
 
   const { camera, gl } = useThree();
   const raycasterRef = useRef(new THREE.Raycaster());
@@ -254,15 +255,20 @@ export default function VehicleModel() {
       c.mirror_glass_right.rotation.y = mirrorTilt.right.y * 0.44;
     }
 
-    // Ambient interior strips — update emissive color + intensity from store every frame
-    const ambientI = (ambientBrightness / 100) * 1.4;
-    ["ambient_dash","ambient_footwell_fl","ambient_footwell_fr",
-     "ambient_door_fl","ambient_door_fr","ambient_door_rl","ambient_door_rr"].forEach(n => {
-      const m = c[n];
-      if (!m?.material) return;
-      m.material.emissive.set(ambientColor);
-      m.material.emissiveIntensity = ambientI;
-    });
+    // Ambient interior strips — only update when color or brightness actually changes
+    const prev = prevAmbientRef.current;
+    if (ambientColor !== prev.color || ambientBrightness !== prev.brightness) {
+      prev.color = ambientColor;
+      prev.brightness = ambientBrightness;
+      const ambientI = (ambientBrightness / 100) * 1.4;
+      ["ambient_dash","ambient_footwell_fl","ambient_footwell_fr",
+       "ambient_door_fl","ambient_door_fr","ambient_door_rl","ambient_door_rr"].forEach(n => {
+        const m = c[n];
+        if (!m?.material) return;
+        m.material.emissive.set(ambientColor);
+        m.material.emissiveIntensity = ambientI;
+      });
+    }
 
     // Headlights — DRL is warm white at low intensity; High Beam is bright cool white
     const hlTarget = headlightMode === 'high' ? 2.0 : headlightMode === 'drl' ? 0.5 : 0;

@@ -198,7 +198,8 @@ function SceneContent() {
   useEffect(() => {
     cameraRig.controls = controlsRef.current;
     cameraRig.camera = camera;
-  }, [camera]);
+    cameraRig.gl = gl;
+  }, [camera, gl]);
 
   useIntroSequence();
 

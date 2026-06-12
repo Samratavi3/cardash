@@ -4,6 +4,7 @@ import { CAMERA_POSITIONS } from '../constants/cameraPositions'
 export const cameraRig = {
   controls: null,
   camera: null,
+  gl: null,
   _fovRafId: null, // tracks active FOV tween so repeated calls cancel the previous one
 }
 

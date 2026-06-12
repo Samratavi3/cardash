@@ -10,47 +10,54 @@ function getAudioCtx() {
   return audioCtx
 }
 
+function scheduleAudio(ctx, fn) {
+  if (ctx.state === 'suspended') { ctx.resume().then(fn).catch(() => {}); return }
+  fn()
+}
+
 function playTone(frequency, duration, type = 'sine', volume = 0.08, attack = 0.01, release = 0.15) {
   try {
     const ctx = getAudioCtx()
-    if (ctx.state === 'suspended') ctx.resume()
-    const osc = ctx.createOscillator()
-    const gain = ctx.createGain()
-    osc.connect(gain)
-    gain.connect(ctx.destination)
-    osc.type = type
-    osc.frequency.setValueAtTime(frequency, ctx.currentTime)
-    gain.gain.setValueAtTime(0, ctx.currentTime)
-    gain.gain.linearRampToValueAtTime(volume, ctx.currentTime + attack)
-    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + duration)
-    osc.start(ctx.currentTime)
-    osc.stop(ctx.currentTime + duration + release)
+    scheduleAudio(ctx, () => {
+      const osc = ctx.createOscillator()
+      const gain = ctx.createGain()
+      osc.connect(gain)
+      gain.connect(ctx.destination)
+      osc.type = type
+      osc.frequency.setValueAtTime(frequency, ctx.currentTime)
+      gain.gain.setValueAtTime(0, ctx.currentTime)
+      gain.gain.linearRampToValueAtTime(volume, ctx.currentTime + attack)
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + duration)
+      osc.start(ctx.currentTime)
+      osc.stop(ctx.currentTime + duration + release)
+    })
   } catch (_) {}
 }
 
 function playNoise(duration, volume = 0.06, attack = 0.005, hiFreq = 3000, loFreq = 100) {
   try {
     const ctx = getAudioCtx()
-    if (ctx.state === 'suspended') ctx.resume()
-    const bufSize = ctx.sampleRate * duration
-    const buf = ctx.createBuffer(1, bufSize, ctx.sampleRate)
-    const data = buf.getChannelData(0)
-    for (let i = 0; i < bufSize; i++) data[i] = Math.random() * 2 - 1
-    const src = ctx.createBufferSource()
-    src.buffer = buf
-    const hi = ctx.createBiquadFilter()
-    hi.type = 'bandpass'
-    hi.frequency.value = (hiFreq + loFreq) / 2
-    hi.Q.value = 0.5
-    const gain = ctx.createGain()
-    gain.gain.setValueAtTime(0, ctx.currentTime)
-    gain.gain.linearRampToValueAtTime(volume, ctx.currentTime + attack)
-    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + duration)
-    src.connect(hi)
-    hi.connect(gain)
-    gain.connect(ctx.destination)
-    src.start()
-    src.stop(ctx.currentTime + duration + 0.05)
+    scheduleAudio(ctx, () => {
+      const bufSize = ctx.sampleRate * duration
+      const buf = ctx.createBuffer(1, bufSize, ctx.sampleRate)
+      const data = buf.getChannelData(0)
+      for (let i = 0; i < bufSize; i++) data[i] = Math.random() * 2 - 1
+      const src = ctx.createBufferSource()
+      src.buffer = buf
+      const hi = ctx.createBiquadFilter()
+      hi.type = 'bandpass'
+      hi.frequency.value = (hiFreq + loFreq) / 2
+      hi.Q.value = 0.5
+      const gain = ctx.createGain()
+      gain.gain.setValueAtTime(0, ctx.currentTime)
+      gain.gain.linearRampToValueAtTime(volume, ctx.currentTime + attack)
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + duration)
+      src.connect(hi)
+      hi.connect(gain)
+      gain.connect(ctx.destination)
+      src.start()
+      src.stop(ctx.currentTime + duration + 0.05)
+    })
   } catch (_) {}
 }
 
