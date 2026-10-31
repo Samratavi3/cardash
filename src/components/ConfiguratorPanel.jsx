@@ -9,56 +9,53 @@ import { HOTSPOT_META } from '../constants/hotspots'
 const WHEEL_STYLES = [
   {
     id: 'stock',
-    name: '16″ Silver Alloy',
-    desc: 'Factory fitment',
+    name: '16″ Diamond-Cut',
+    desc: 'ZX · twisted twin-spoke, dual-tone',
     preview: (
       <svg viewBox="0 0 48 48" className="w-12 h-12">
-        <circle cx="24" cy="24" r="22" fill="#111" stroke="#666" strokeWidth="1.5" />
-        <circle cx="24" cy="24" r="15" fill="#888" stroke="#aaa" strokeWidth="1" />
-        <circle cx="24" cy="24" r="4" fill="#555" />
-        {[0,72,144,216,288].map(a => (
-          <line key={a} x1="24" y1="24"
-            x2={24 + 11 * Math.cos((a - 90) * Math.PI / 180)}
-            y2={24 + 11 * Math.sin((a - 90) * Math.PI / 180)}
-            stroke="#999" strokeWidth="2.5" />
+        <circle cx="24" cy="24" r="22" fill="#0b0b0c" stroke="#555" strokeWidth="1.5" />
+        <circle cx="24" cy="24" r="16" fill="#151618" />
+        {[0, 72, 144, 216, 288].map(a => (
+          <g key={a} transform={`rotate(${a} 24 24)`}>
+            <path d="M 23 20 Q 21 13 18.5 8.5 L 21 8 Q 23.2 13 24.6 20 Z" fill="#d9dce0" />
+            <path d="M 25 20 Q 26.2 13 28.2 8.2 L 30.6 9.2 Q 27.8 13.6 26.6 20.4 Z" fill="#c4c8cd" />
+          </g>
         ))}
+        <circle cx="24" cy="24" r="4.2" fill="#1d1e21" stroke="#888" strokeWidth="0.6" />
       </svg>
     ),
   },
   {
     id: 'sport',
-    name: 'Sport 5-Spoke',
-    desc: 'Gunmetal finish',
+    name: '15″ Multi-Spoke',
+    desc: 'V grade · gunmetal grey',
     preview: (
       <svg viewBox="0 0 48 48" className="w-12 h-12">
-        <circle cx="24" cy="24" r="22" fill="#0a0a0a" stroke="#444" strokeWidth="1.5" />
-        <circle cx="24" cy="24" r="14" fill="#2a2a2a" stroke="#555" strokeWidth="1" />
-        <circle cx="24" cy="24" r="4" fill="#333" />
-        {[0,72,144,216,288].map(a => (
-          <g key={a} transform={`rotate(${a} 24 24)`}>
-            <path d="M 24 24 L 21 11 L 27 11 Z" fill="#555" />
-          </g>
+        <circle cx="24" cy="24" r="22" fill="#111" stroke="#555" strokeWidth="1.5" />
+        <circle cx="24" cy="24" r="15" fill="#2c2e32" />
+        {Array.from({ length: 10 }, (_, i) => i * 36).map(a => (
+          <line key={a} x1="24" y1="24"
+            x2={24 + 14 * Math.cos((a - 90) * Math.PI / 180)}
+            y2={24 + 14 * Math.sin((a - 90) * Math.PI / 180)}
+            stroke="#7c8189" strokeWidth="2.2" />
         ))}
+        <circle cx="24" cy="24" r="4" fill="#4a4e55" />
       </svg>
     ),
   },
   {
     id: 'carbon',
     name: 'Forged Carbon',
-    desc: 'Carbon black finish',
+    desc: 'Accessory · aero gloss black',
     preview: (
       <svg viewBox="0 0 48 48" className="w-12 h-12">
         <circle cx="24" cy="24" r="22" fill="#040404" stroke="#222" strokeWidth="1.5" />
         <circle cx="24" cy="24" r="14" fill="#0a0a0a" stroke="#1a1a1a" strokeWidth="1" />
         <circle cx="24" cy="24" r="4" fill="#080808" stroke="#333" strokeWidth="0.5" />
-        {[0,72,144,216,288].map(a => (
+        {Array.from({ length: 14 }, (_, i) => i * (360 / 14)).map(a => (
           <g key={a} transform={`rotate(${a} 24 24)`}>
-            <path d="M 24 24 L 20 10 L 28 10 Z" fill="#181818" stroke="#2a2a2a" strokeWidth="0.5" />
+            <path d="M 24 18 Q 26 14 25 10" stroke="#262626" strokeWidth="1.4" fill="none" />
           </g>
-        ))}
-        {/* Carbon fibre texture hint */}
-        {[10,14,18,22,26,30].map(y => (
-          <line key={y} x1="12" y1={y} x2="36" y2={y} stroke="rgba(255,255,255,0.03)" strokeWidth="1" />
         ))}
       </svg>
     ),
@@ -70,13 +67,15 @@ export default function ConfiguratorPanel() {
   const isIntroComplete = useCarState(s => s.isIntroComplete)
   const activeHotspot   = useCarState(s => s.activeHotspot)
   const config = useScreenConfig()
-  const [open, setOpen] = useState(true)
+  const open = useCarState(s => s.isConfiguratorOpen)
+  const setOpenState = useCarState(s => s.setConfiguratorOpen)
+  const setOpen = (fn) => setOpenState(typeof fn === 'function' ? fn(open) : fn)
   const [tab, setTab] = useState('color') // 'color' | 'wheel'
 
   // Auto-collapse when a right-anchored hotspot card opens — they share the same corner
   useEffect(() => {
-    if (activeHotspot && HOTSPOT_META[activeHotspot]?.side === 'right') setOpen(false)
-  }, [activeHotspot])
+    if (activeHotspot && HOTSPOT_META[activeHotspot]?.side === 'right') setOpenState(false)
+  }, [activeHotspot, setOpenState])
 
   return (
     <motion.div

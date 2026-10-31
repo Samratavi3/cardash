@@ -90,7 +90,7 @@ export default function IntroOverlay() {
                 HONDA
               </span>
               <div className="h-px w-32 bg-gradient-to-r from-transparent via-cyan-400 to-transparent" />
-              <span className="text-sm font-light tracking-[0.4em] text-white/50 uppercase">City ZX Turbo</span>
+              <span className="text-sm font-light tracking-[0.4em] text-white/50 uppercase">New City ZX</span>
             </div>
 
             {/* Loading spinner */}

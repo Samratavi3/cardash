@@ -38,6 +38,12 @@ export const useCarState = create((set) => ({
   isAutoRotate: true,
   isIntroComplete: false,
   isSpecSheetOpen: false,
+  // Pulsing hotspot pins on the exterior
+  showHotspotPins: true,
+  setShowHotspotPins: (val) => set({ showHotspotPins: val }),
+  // Configurator drawer (bottom-right) — the 3D view lens-shifts around it
+  isConfiguratorOpen: true,
+  setConfiguratorOpen: (val) => set({ isConfiguratorOpen: val }),
 
   // Hotspots
   activeHotspot: null,
@@ -80,7 +86,8 @@ export const useCarState = create((set) => ({
     set((s) => ({ steeringPos: { ...s.steeringPos, [key]: val } })),
 
   // Headlight mode — 'off' | 'drl' | 'high'
-  headlightMode: 'off',
+  // DRLs (incl. the 2026 connected light bar) are on with the ignition
+  headlightMode: 'drl',
   setHeadlightMode: (mode) => set({ headlightMode: mode }),
 
   // Brake light mode — 'standard' | 'sequential' | 'pulse'

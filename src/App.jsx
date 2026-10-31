@@ -1,7 +1,7 @@
 import { useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
-  Sun, Moon, RotateCcw, Camera, FileText, ArrowLeftRight, Monitor, Scan
+  Sun, Moon, RotateCcw, Camera, FileText, ArrowLeftRight, Monitor, Scan, Crosshair
 } from 'lucide-react'
 import { useCarState } from './hooks/useCarState'
 import { useScreenConfig } from './hooks/useScreenConfig'
@@ -54,10 +54,13 @@ function SizeBadge({ screenMode }) {
           animate={{ opacity: 1, y: 0, scale: 1 }}
           exit={{ opacity: 0, y: -4, scale: 0.95 }}
           transition={{ duration: 0.35, ease: [0.25, 0.46, 0.45, 0.94] }}
-          className="absolute left-1/2 -translate-x-1/2 -bottom-6 z-50
+          className="absolute left-1/2 -bottom-6 z-50
                      flex items-center gap-2 px-5 py-2 rounded-full
                      text-sm font-bold tracking-[0.12em] uppercase whitespace-nowrap pointer-events-none"
           style={{
+            // Framer Motion owns `transform` here (y/scale), which would wipe a
+            // Tailwind -translate-x-1/2 — so the centring offset goes through it too.
+            x: '-50%',
             background: 'rgba(4,4,14,0.97)',
             border: '1px solid rgba(0,212,255,0.5)',
             color: '#00d4ff',
@@ -107,6 +110,7 @@ function CanvasToolbar() {
     activeView, setActiveView, isDayMode, toggleDayMode,
     isAutoRotate, setAutoRotate, setSpecSheetOpen, isSpecSheetOpen,
     isIntroComplete, clearHotspot, panoramaMode, setPanoramaMode,
+    showHotspotPins, setShowHotspotPins,
   } = useCarState()
   const { playCameraMove, playUIOpen } = useSoundFX()
 
@@ -147,7 +151,8 @@ function CanvasToolbar() {
       initial={{ opacity: 0, y: -12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5, delay: 0.2 }}
-      className="absolute top-4 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2 pointer-events-auto"
+      style={{ x: '-50%' }} // centring via Framer Motion — it owns `transform`
+      className="absolute top-4 left-1/2 z-20 flex items-center gap-2 pointer-events-auto max-w-[calc(100%-1rem)]"
     >
       <button
         onClick={handleViewToggle}
@@ -202,6 +207,18 @@ function CanvasToolbar() {
       >
         <RotateCcw size={14} color={isAutoRotate ? '#00d4ff' : 'rgba(255,255,255,0.6)'}
           style={isAutoRotate ? { filter: 'drop-shadow(0 0 4px #00d4ff)', animation: 'spin 2s linear infinite' } : {}} />
+      </button>
+
+      <button
+        onClick={() => setShowHotspotPins(!showHotspotPins)}
+        className={`w-9 h-9 rounded-xl border transition-all flex items-center justify-center
+          ${showHotspotPins ? 'bg-cyan-500/20 border-cyan-400/40' : 'bg-white/8 border-white/15 hover:bg-white/14'}`}
+        style={{ backdropFilter: 'blur(20px)' }}
+        title="Hotspot markers"
+        aria-label={showHotspotPins ? 'Hide hotspot markers' : 'Show hotspot markers'}
+        aria-pressed={showHotspotPins}
+      >
+        <Crosshair size={14} color={showHotspotPins ? '#00d4ff' : 'rgba(255,255,255,0.6)'} />
       </button>
 
       <button

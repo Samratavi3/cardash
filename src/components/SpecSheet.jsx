@@ -4,11 +4,12 @@ import { useCarState } from '../hooks/useCarState'
 
 const specs = [
   { category: 'Engine',   icon: Zap,    items: [
-    { label: 'Engine', value: '1.5L i-VTEC Turbo' },
+    { label: 'Engine', value: '1.5L i-VTEC petrol' },
     { label: 'Displacement', value: '1,498 cc' },
     { label: 'Max Power', value: '121 PS @ 6,600 rpm' },
     { label: 'Max Torque', value: '145 Nm @ 4,300 rpm' },
-    { label: 'Transmission', value: 'CVT (7-speed simulated)' },
+    { label: 'Transmission', value: 'CVT (7-speed simulated) / 6MT' },
+    { label: 'e:HEV Hybrid', value: '126 PS · 253 Nm · e-CVT' },
   ]},
   { category: 'Performance', icon: Gauge, items: [
     { label: '0–100 km/h', value: '9.5 sec' },
@@ -16,11 +17,9 @@ const specs = [
     { label: 'Drive', value: 'Front-Wheel Drive' },
   ]},
   { category: 'Efficiency', icon: Fuel, items: [
-    { label: 'City Fuel Economy', value: '6.2 L/100km' },
-    { label: 'Highway', value: '4.8 L/100km' },
-    { label: 'Combined', value: '5.4 L/100km' },
-    { label: 'Tank Capacity', value: '48 L' },
-    { label: 'Range (combined)', value: '~888 km' },
+    { label: 'Petrol CVT (ARAI)', value: '18.4 km/l' },
+    { label: 'Petrol MT (ARAI)', value: '17.8 km/l' },
+    { label: 'e:HEV (ARAI)', value: '27.26 km/l' },
   ]},
   { category: 'Safety', icon: Shield, items: [
     { label: 'NCAP Rating', value: '★★★★★' },
@@ -30,10 +29,10 @@ const specs = [
     { label: 'VSA / TCS', value: 'Standard' },
   ]},
   { category: 'Dimensions', icon: Star, items: [
-    { label: 'Length × Width × Height', value: '4,549 × 1,748 × 1,467 mm' },
+    { label: 'Length × Width × Height', value: '4,594 × 1,748 × 1,489 mm' },
     { label: 'Wheelbase', value: '2,600 mm' },
     { label: 'Ground Clearance', value: '165 mm' },
-    { label: 'Boot Volume', value: '506 L' },
+    { label: 'Boot Volume', value: '506 L (e:HEV 410 L)' },
     { label: 'Kerb Weight', value: '1,147 kg' },
   ]},
 ]
@@ -88,7 +87,7 @@ export default function SpecSheet() {
 
           <div className="p-4 border-t border-white/5">
             <div className="text-[10px] text-white/20 text-center">
-              Specifications for Honda City ZX Turbo CVT 2024
+              Specifications for the New Honda City ZX CVT (2026 facelift)
             </div>
           </div>
         </motion.div>

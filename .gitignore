@@ -25,3 +25,6 @@ dist-ssr
 
 # Claude session config
 .claude/
+
+# Screenshot helper output
+ss_view_*.png

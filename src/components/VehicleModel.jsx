@@ -1,1137 +1,709 @@
-import { useRef, useEffect } from "react";
-import { useThree, useFrame } from "@react-three/fiber";
-import * as THREE from "three";
-import { useCarState } from "../hooks/useCarState";
-import { flyTo } from "../hooks/useCameraRig";
-import { EXTERIOR_MESH_TO_HOTSPOT } from "../constants/hotspots";
+import { useEffect, useLayoutEffect, useMemo, useRef, createRef } from 'react'
+import { useFrame } from '@react-three/fiber'
+import { Bvh } from '@react-three/drei'
+import { easing } from 'maath'
+import * as THREE from 'three'
+import { useCarState } from '../hooks/useCarState'
+import { flyTo } from '../hooks/useCameraRig'
+import { EXTERIOR_MESH_TO_HOTSPOT } from '../constants/hotspots'
+import { CAR, GH } from '../three/carSurface'
+import { buildCar } from '../three/buildCar'
+import { getCarMaterials, applyPaint } from '../three/materials'
+import { getInteriorMaterials } from '../three/interiorMaterials'
+import { hBadgeGeometry, badgeRingGeometry } from '../three/wheelGeometry'
+import Wheel, { WheelTub } from './car/Wheel'
+import Mirror from './car/Mirror'
 
-// Y position of window glass when fully closed — LOCAL to the door group (door group y=0.90, world y=1.34)
-const WINDOW_BASE_Y = 0.44;
+const DOOR_KEYS = ['fl', 'fr', 'rl', 'rr']
+const UP = new THREE.Vector3(0, 1, 0)
 
-// Sourced from constants/hotspots.js — single-source for all exterior mesh→hotspot mapping
-const HOTSPOT_MAP = EXTERIOR_MESH_TO_HOTSPOT;
+/** Quaternion whose +Z faces `normal` with +Y kept as upright as possible. */
+function faceQuat(normal, up = UP) {
+  const z = normal.clone().normalize()
+  const x = new THREE.Vector3().crossVectors(up, z)
+  if (x.lengthSq() < 1e-6) x.set(1, 0, 0)
+  x.normalize()
+  const y = new THREE.Vector3().crossVectors(z, x)
+  return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, y, z))
+}
+/** Quaternion rotating +Y onto `dir`. */
+const yQuat = (dir) => new THREE.Quaternion().setFromUnitVectors(UP, dir.clone().normalize())
 
-// Rim material per wheel style
-const RIM_PROPS = {
-  stock:  { color: "#a0a0a0", metalness: 0.90, roughness: 0.10 },
-  sport:  { color: "#3a3a3a", metalness: 0.80, roughness: 0.20 },
-  carbon: { color: "#181818", metalness: 0.25, roughness: 0.55 },
-};
+const FRONT_WIPER_RATES = { int1: 1.1, int2: 1.9, low: 3.4, high: 5.6 }
+const REAR_WIPER_RATES = { int: 1.4, low: 2.8, high: 4.8 }
 
-export default function VehicleModel() {
-  const groupRef   = useRef();
-  const meshCache  = useRef({});   // populated once after mount
-  const doorGeoFL  = useRef();
-  const doorGeoFR  = useRef();
-  const doorGeoRL  = useRef();
-  const doorGeoRR  = useRef();
-  const bonnetGeo  = useRef();
-  const bootGeo    = useRef();
-
-  const pivotApplied = useRef(false);   // guard against StrictMode double-invoke
-  const wiperPhase     = useRef(0);     // continuous phase for front wiper oscillation
-  const rearWiperPhase  = useRef(0);     // continuous phase for rear wiper oscillation
-  const prevAmbientRef  = useRef({ color: '', brightness: -1 });
-
-  const { camera, gl } = useThree();
-  const raycasterRef = useRef(new THREE.Raycaster());
-  const mouseRef     = useRef(new THREE.Vector2());
-
-  // Animation lerp targets — initialised to resting positions
-  const animTargets = useRef({
-    door_fl: 0, door_fr: 0, door_rl: 0, door_rr: 0,
-    bonnet: 0,  boot: 0,
-    wiper_front_left: -Math.PI / 6, wiper_front_right: Math.PI / 6, wiper_rear: -Math.PI / 6,
-    sunroof: 0, sunroof_slide: 0,
-    window_fl: WINDOW_BASE_Y, window_fr: WINDOW_BASE_Y,
-    window_rl: WINDOW_BASE_Y, window_rr: WINDOW_BASE_Y,
-    mirror_left: 0, mirror_right: 0,
-    headlight_l_intensity: 0, headlight_r_intensity: 0,
-    taillight_l_intensity: 0, taillight_r_intensity: 0,
-    foglight_l_intensity: 0, foglight_r_intensity: 0,
-    foglight_rear_intensity: 0,
-  });
-
-  const selectedColor    = useCarState(s => s.selectedColor);
-  const animationStates  = useCarState(s => s.animationStates);
-  const setActiveHotspot = useCarState(s => s.setActiveHotspot);
-  const selectedWheel    = useCarState(s => s.selectedWheel);
-  const paintFinish      = useCarState(s => s.paintFinish);
-  const activeView       = useCarState(s => s.activeView);
-  const wiperSpeed       = useCarState(s => s.wiperSpeed);
-  const rearWiperSpeed   = useCarState(s => s.rearWiperSpeed);
-  const ambientColor     = useCarState(s => s.ambientColor);
-  const ambientBrightness = useCarState(s => s.ambientBrightness);
-  const mirrorTilt       = useCarState(s => s.mirrorTilt);
-  const headlightMode    = useCarState(s => s.headlightMode);
-  const brakeLightMode   = useCarState(s => s.brakeLightMode);
-
-  const rim        = RIM_PROPS[selectedWheel] || RIM_PROPS.stock;
-  const bodyMetal  = paintFinish === "matte" ? 0    : selectedColor.metalness;
-  const bodyRough  = paintFinish === "matte" ? 0.85 : selectedColor.roughness;
-  const bodyClearcoat = paintFinish === "matte" ? 0 : 0.9;
-
-  // ── Cache named mesh references once after first render ────────────────────
-  useEffect(() => {
-    if (!groupRef.current) return;
-    [
-      "adas_camera", "bumper_front", "bumper_rear",
-      "door_fl", "door_fr", "door_rl", "door_rr",
-      "bonnet", "boot",
-      "wiper_front_left", "wiper_front_right", "wiper_rear",
-      "roof",
-      "window_fl", "window_fr", "window_rl", "window_rr",
-      "mirror_left", "mirror_right",
-      "headlight_l", "headlight_r",
-      "taillight_l", "taillight_r",
-      "foglight_l", "foglight_r", "foglight_rear",
-      "ambient_dash", "ambient_footwell_fl", "ambient_footwell_fr",
-      "ambient_door_fl", "ambient_door_fr", "ambient_door_rl", "ambient_door_rr",
-      "mirror_glass_left", "mirror_glass_right",
-    ].forEach((n) => {
-      meshCache.current[n] = groupRef.current.getObjectByName(n);
-    });
-  }, []);
-
-  // ── Translate geometries once to place each pivot at its hinge edge ───────
-  // Guard with a ref so StrictMode's double-invoke doesn't apply the offset twice.
-  useEffect(() => {
-    if (pivotApplied.current) return;
-    pivotApplied.current = true;
-    // Doors: shift so local z=0 is the front-edge hinge (minimal x-nudge to avoid z-fighting with body panels)
-    if (doorGeoFL.current) doorGeoFL.current.translate( 0.002, 0, -0.30);
-    if (doorGeoFR.current) doorGeoFR.current.translate(-0.002, 0, -0.30);
-    if (doorGeoRL.current) doorGeoRL.current.translate( 0.002, 0, -0.25);
-    if (doorGeoRR.current) doorGeoRR.current.translate(-0.002, 0, -0.25);
-    // Bonnet: shift so local z=0 is the rear edge (cowl hinge); body extends forward to local z=[0,+1.33]
-    if (bonnetGeo.current)  bonnetGeo.current.translate(0, 0, 0.665);
-    // Boot: shift so local z=0 is the FRONT edge (hinge near rear window); lid extends rearward to local z=-1.03
-    if (bootGeo.current)    bootGeo.current.translate(0, 0, -0.515);
-  }, []);
-
-  // ── Click handling via manual raycaster on the raw canvas ─────────────────
-  useEffect(() => {
-    const canvas = gl.domElement;
-
-    const CLICKABLE = new Set(Object.keys(HOTSPOT_MAP));
-
-    function handlePointerDown(event) {
-      if (!groupRef.current) return;
-      const rect = canvas.getBoundingClientRect();
-      mouseRef.current.x = ((event.clientX - rect.left) / rect.width)  *  2 - 1;
-      mouseRef.current.y = ((event.clientY - rect.top)  / rect.height) * -2 + 1;
-      raycasterRef.current.setFromCamera(mouseRef.current, camera);
-
-      // Use pre-cached refs — avoids O(n) traverse on every click
-      const targets = Object.values(meshCache.current).filter(
-        (m) => m && CLICKABLE.has(m.name)
-      );
-
-      // recursive=true so child meshes inside named groups (mirrors, wipers) are hit
-      const hits = raycasterRef.current.intersectObjects(targets, true);
-      if (!hits.length) return;
-
-      // hits[0].object may be an unnamed child — walk up to find the named clickable ancestor
-      let hitObj = hits[0].object;
-      while (hitObj && !CLICKABLE.has(hitObj.name)) hitObj = hitObj.parent;
-      if (!hitObj) return;
-
-      const partName    = hitObj.name;
-      const hotspotType = HOTSPOT_MAP[partName];
-      if (!hotspotType) return;
-
-      setActiveHotspot(hotspotType);
-      flyTo(hotspotType);
+// ── Small shared geometries ─────────────────────────────────────────────────
+let SMALL = null
+function smallGeo() {
+  if (SMALL) return SMALL
+  const handle = new THREE.CapsuleGeometry(0.013, 0.13, 6, 16)
+  handle.rotateZ(Math.PI / 2)
+  handle.scale(1, 0.9, 0.55)
+  const ledCup = new THREE.LatheGeometry(
+    [[0.0, -0.012], [0.4, -0.011], [0.75, -0.006], [0.95, 0.004], [1.0, 0.01]].map(([r, y]) => new THREE.Vector2(r, y)),
+    32,
+  )
+  const ledLens = new THREE.SphereGeometry(0.42, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2)
+  ledLens.scale(1, 0.35, 1)
+  const sensor = new THREE.CylinderGeometry(0.0115, 0.0115, 0.008, 24)
+  const plate = new THREE.BoxGeometry(0.5, 0.12, 0.006)
+  const fogLens = new THREE.CylinderGeometry(0.036, 0.036, 0.012, 32)
+  const fogRing = new THREE.TorusGeometry(0.038, 0.005, 8, 40)
+  const finShape = new THREE.Shape()
+  finShape.moveTo(-0.1, 0)
+  finShape.quadraticCurveTo(-0.02, 0.012, 0.045, 0.062)
+  finShape.quadraticCurveTo(0.062, 0.07, 0.07, 0.055)
+  finShape.lineTo(0.085, 0)
+  finShape.closePath()
+  const fin = new THREE.ExtrudeGeometry(finShape, {
+    depth: 0.05, bevelEnabled: true, bevelThickness: 0.012, bevelSize: 0.01, bevelSegments: 4, curveSegments: 16,
+  })
+  fin.translate(0, 0, -0.025)
+  fin.rotateY(Math.PI / 2) // length along −Z… authored so +X tip points rearward
+  // Matrix-Mesh grille cell: bevelled hexagonal ring (flat-top), facing +Z.
+  // The rings' rims catch the studio light and trace the honeycomb outline.
+  const hexPath = (r) => {
+    const p = new THREE.Path()
+    for (let i = 0; i <= 6; i++) {
+      const a = (i / 6) * Math.PI * 2
+      if (i === 0) p.moveTo(Math.cos(a) * r, Math.sin(a) * r)
+      else p.lineTo(Math.cos(a) * r, Math.sin(a) * r)
     }
+    return p
+  }
+  const hexShape = new THREE.Shape(hexPath(1).getPoints())
+  hexShape.holes.push(hexPath(0.74))
+  const hex = new THREE.ExtrudeGeometry(hexShape, {
+    depth: 0.5, bevelEnabled: true, bevelThickness: 0.25, bevelSize: 0.08, bevelSegments: 2, curveSegments: 1,
+  })
+  hex.translate(0, 0, -0.5)
+  const radar = new THREE.CylinderGeometry(0.014, 0.014, 0.006, 32)
+  radar.rotateX(Math.PI / 2)
+  SMALL = {
+    handle, ledCup, ledLens, sensor, plate, fogLens, fogRing, fin, hex, radar,
+    logoBadge: hBadgeGeometry(0.046), logoRing: badgeRingGeometry(0.066, 0.051, 0.005),
+    smallBadge: hBadgeGeometry(0.048), smallRing: badgeRingGeometry(0.068, 0.053, 0.005),
+  }
+  return SMALL
+}
 
-    if (activeView !== 'exterior') return;
-    canvas.addEventListener("pointerdown", handlePointerDown);
-    return () => canvas.removeEventListener("pointerdown", handlePointerDown);
-  }, [camera, gl, setActiveHotspot, activeView]);
+/** Chrome "CITY" script for the boot, drawn to a canvas. */
+let CITY_TEX = null
+function cityTexture() {
+  if (CITY_TEX) return CITY_TEX
+  const c = document.createElement('canvas')
+  c.width = 512
+  c.height = 128
+  const g = c.getContext('2d')
+  g.fillStyle = '#ffffff'
+  g.font = '800 104px "Arial Black", Inter, Arial, sans-serif'
+  g.textAlign = 'center'
+  g.textBaseline = 'middle'
+  g.save()
+  g.translate(256, 66)
+  g.scale(1.25, 1) // wide, flat lettering like the badge
+  g.fillText('CITY', 0, 0)
+  g.restore()
+  CITY_TEX = new THREE.CanvasTexture(c)
+  CITY_TEX.anisotropy = 8
+  return CITY_TEX
+}
 
-  // Phase advance rates (rad/s) for each speed mode — abs(sin(phase)) oscillates wipers
-  const FRONT_WIPER_RATES = { int1: 0.8, int2: 1.5, low: 3.0, high: 5.5 };
-  const REAR_WIPER_RATES  = { int: 1.2, low: 2.5, high: 5.0 };
+/** Instanced honeycomb tiles laid on the fascia (one draw call). */
+function Honeycomb({ cells, material }) {
+  const S = smallGeo()
+  const ref = useRef()
+  useLayoutEffect(() => {
+    const mesh = ref.current
+    if (!mesh) return
+    const m = new THREE.Matrix4()
+    const basis = new THREE.Matrix4()
+    const q = new THREE.Quaternion()
+    const sc = new THREE.Vector3()
+    const x = new THREE.Vector3()
+    const y = new THREE.Vector3()
+    cells.forEach((c, i) => {
+      x.copy(c.tangent).addScaledVector(c.normal, -c.tangent.dot(c.normal)).normalize()
+      y.crossVectors(c.normal, x)
+      q.setFromRotationMatrix(basis.makeBasis(x, y, c.normal))
+      sc.set(c.w * 0.5, c.h * 0.5 / 0.866, 0.014)
+      mesh.setMatrixAt(i, m.compose(c.position, q, sc))
+    })
+    mesh.instanceMatrix.needsUpdate = true
+    mesh.computeBoundingSphere()
+  }, [cells])
+  return <instancedMesh ref={ref} args={[S.hex, material, cells.length]} />
+}
 
-  // ── Per-frame animation ────────────────────────────────────────────────────
-  useFrame((_, delta) => {
-    if (!groupRef.current) return;
-    const c     = meshCache.current;
-    const s     = animationStates;
-    const t     = animTargets.current;
-    const SPEED = 0.1;
-
-    // Doors (Y-axis rotation, pivot at hinge edge set by geometry translate)
-    ["door_fl", "door_fr", "door_rl", "door_rr"].forEach((name) => {
-      if (!c[name]) return;
-      const isLeft = name.endsWith("_fl") || name.endsWith("_rl");
-      const target = s[name] ? (isLeft ? -Math.PI / 3 : Math.PI / 3) : 0;
-      t[name] += (target - t[name]) * SPEED;
-      c[name].rotation.y = t[name];
-    });
-
-    // Hood — pivots from rear hinge (cowl); negative rotation lifts front edge up
-    if (c.bonnet) {
-      const target = s.bonnet ? -Math.PI / 2.8 : 0;
-      t.bonnet += (target - t.bonnet) * SPEED;
-      c.bonnet.rotation.x = t.bonnet;
+// ── Door card details (interior side of each door) ──────────────────────────
+const SKIN = 0.058 // door thickness (solidify) — the card surface is this far inboard
+function DoorCard({ d }) {
+  const IM = getInteriorMaterials()
+  const c = d.card
+  const geos = useMemo(() => {
+    // Card features are placed along the inward normal from the outer skin
+    const inset = (fr, extra) => fr.position.clone().addScaledVector(fr.normal, -(SKIN + extra))
+    return {
+      arm: new THREE.BoxGeometry(0.075, 0.042, c.armLen, 1, 1, 8),
+      pocket: new THREE.BoxGeometry(0.034, 0.075, c.pocketLen),
+      strip: new THREE.BoxGeometry(0.008, 0.007, c.ambLen),
+      speaker: new THREE.CylinderGeometry(0.075, 0.075, 0.012, 40),
+      pull: new THREE.BoxGeometry(0.03, 0.03, 0.12),
+      sw: new THREE.BoxGeometry(0.06, 0.022, 0.17),
+      armPos: inset(c.arm, 0.036),
+      pocketPos: inset(c.pocket, 0.016),
+      stripPos: inset(c.ambient, 0.003),
+      speakerPos: inset(c.speaker, 0.005),
+      pullPos: inset(c.pull, 0.018),
+      swPos: inset(c.switches, 0.07),
     }
-
-    // Boot — pivots from front hinge (near rear window); positive rotation lifts rear/license-plate end up
-    if (c.boot) {
-      const target = s.boot ? Math.PI / 2.8 : 0;
-      t.boot += (target - t.boot) * SPEED;
-      c.boot.rotation.x = t.boot;
-    }
-
-    // Front wipers — arm lies on windshield surface, sweeps across glass via local Z rotation
-    // rest=-PI/6 (slightly right of up), swept=+PI/3 (pointing upper-left); right wiper mirrors
-    if (s.wiper_front_left) {
-      wiperPhase.current += delta * (FRONT_WIPER_RATES[wiperSpeed] ?? 1.5);
-      const swing = Math.abs(Math.sin(wiperPhase.current));
-      const leftAngle  = -Math.PI / 6 + swing * (Math.PI / 2);
-      const rightAngle =  Math.PI / 6 - swing * (Math.PI / 2);
-      if (c.wiper_front_left)  { t.wiper_front_left  = leftAngle;  c.wiper_front_left.rotation.z  = leftAngle;  }
-      if (c.wiper_front_right) { t.wiper_front_right = rightAngle; c.wiper_front_right.rotation.z = rightAngle; }
-    } else {
-      wiperPhase.current = 0;
-      if (c.wiper_front_left)  { t.wiper_front_left  += (-Math.PI / 6 - t.wiper_front_left)  * SPEED; c.wiper_front_left.rotation.z  = t.wiper_front_left;  }
-      if (c.wiper_front_right) { t.wiper_front_right += ( Math.PI / 6 - t.wiper_front_right) * SPEED; c.wiper_front_right.rotation.z = t.wiper_front_right; }
-    }
-
-    // Rear wiper — same principle: rest=-PI/6, sweeps +PI/2 range
-    if (s.wiper_rear) {
-      rearWiperPhase.current += delta * (REAR_WIPER_RATES[rearWiperSpeed] ?? 1.2);
-      const rearSwing = Math.abs(Math.sin(rearWiperPhase.current));
-      const rearAngle = -Math.PI / 6 + rearSwing * (Math.PI / 2);
-      if (c.wiper_rear) { t.wiper_rear = rearAngle; c.wiper_rear.rotation.z = rearAngle; }
-    } else {
-      rearWiperPhase.current = 0;
-      if (c.wiper_rear) { t.wiper_rear += (-Math.PI / 6 - t.wiper_rear) * SPEED; c.wiper_rear.rotation.z = t.wiper_rear; }
-    }
-
-    // Sunroof: state 1 = vent tilt (rear edge lifts), state 2 = slide back + slight tilt
-    if (c.roof) {
-      const tiltTarget  = s.sunroof >= 1 ? Math.PI / 22 : 0; // ~8° tilt for vent and open
-      const slideTarget = s.sunroof === 2 ? -0.9 : 0;        // slide -0.9 units for open
-      t.sunroof       += (tiltTarget  - t.sunroof)       * SPEED;
-      t.sunroof_slide += (slideTarget - t.sunroof_slide) * SPEED;
-      c.roof.rotation.x = t.sunroof;
-      c.roof.position.z = -0.195 + t.sunroof_slide;
-    }
-
-    // Windows (0 = closed at WINDOW_BASE_Y, 100 = open, retracts into glass channel)
-    ["window_fl", "window_fr", "window_rl", "window_rr"].forEach((name) => {
-      const mesh = c[name];
-      if (!mesh) return;
-      const targetY = WINDOW_BASE_Y - (s[name] / 100) * 0.40;
-      t[name] += (targetY - t[name]) * SPEED;
-      mesh.position.y = t[name];
-      if (mesh.material) mesh.material.opacity = 0.38 * (1 - s[name] / 100);
-    });
-
-    // Mirrors — Y-axis rotation: deployed=0 (stalk straight out, max extension).
-    // Fold sweeps the pod REARWARD against the door: for a +x (left) pod that is
-    // +rotation.y (x→−z); for the −x (right) pod it is −rotation.y. 75° (π/2.4)
-    // keeps the pod proud of the door skin instead of sinking into it at 90°.
-    if (c.mirror_left) {
-      const target = s.mirror_left ? Math.PI / 2.4 : 0;
-      t.mirror_left += (target - t.mirror_left) * SPEED;
-      c.mirror_left.rotation.y = t.mirror_left;
-    }
-    if (c.mirror_right) {
-      const target = s.mirror_right ? -Math.PI / 2.4 : 0;
-      t.mirror_right += (target - t.mirror_right) * SPEED;
-      c.mirror_right.rotation.y = t.mirror_right;
-    }
-
-    // Mirror glass tilt — X axis = up/down, Y axis = left/right, max 25° each way
-    if (c.mirror_glass_left) {
-      c.mirror_glass_left.rotation.x = mirrorTilt.left.x * 0.44;
-      c.mirror_glass_left.rotation.y = mirrorTilt.left.y * 0.44;
-    }
-    if (c.mirror_glass_right) {
-      c.mirror_glass_right.rotation.x = mirrorTilt.right.x * 0.44;
-      c.mirror_glass_right.rotation.y = mirrorTilt.right.y * 0.44;
-    }
-
-    // Ambient interior strips — only update when color or brightness actually changes
-    const prev = prevAmbientRef.current;
-    if (ambientColor !== prev.color || ambientBrightness !== prev.brightness) {
-      prev.color = ambientColor;
-      prev.brightness = ambientBrightness;
-      const ambientI = (ambientBrightness / 100) * 1.4;
-      ["ambient_dash","ambient_footwell_fl","ambient_footwell_fr",
-       "ambient_door_fl","ambient_door_fr","ambient_door_rl","ambient_door_rr"].forEach(n => {
-        const m = c[n];
-        if (!m?.material) return;
-        m.material.emissive.set(ambientColor);
-        m.material.emissiveIntensity = ambientI;
-      });
-    }
-
-    // Headlights — DRL is warm white at low intensity; High Beam is bright cool white
-    const hlTarget = headlightMode === 'high' ? 2.0 : headlightMode === 'drl' ? 0.5 : 0;
-    const hlColor  = headlightMode === 'high' ? '#ffffff' : '#ffff88';
-    [c.headlight_l, c.headlight_r].forEach((mesh, ki) => {
-      if (!mesh?.material) return;
-      const key = ki === 0 ? 'headlight_l_intensity' : 'headlight_r_intensity';
-      const diff = hlTarget - t[key];
-      if (Math.abs(diff) > 0.001) {
-        t[key] += diff * SPEED;
-        mesh.material.emissiveIntensity = t[key];
-        mesh.material.emissive.set(hlColor);
-      }
-    });
-
-    // Taillights — mode-aware
-    if (s.taillight_l || s.taillight_r) {
-      const now = performance.now() / 1000;
-      if (brakeLightMode === 'pulse') {
-        const pulse = 0.5 + 0.5 * Math.sin(now * Math.PI * 3); // ~1.5 Hz
-        [c.taillight_l, c.taillight_r].forEach(m => { if (m?.material) m.material.emissiveIntensity = pulse * 1.2; });
-      } else if (brakeLightMode === 'sequential') {
-        const phase = (now % 0.6) / 0.6; // 0→1 every 0.6 s
-        const iL = phase < 0.5 ? phase * 2 : 1;   // left fills first half
-        const iR = phase < 0.5 ? 0 : (phase - 0.5) * 2; // right fills second half
-        if (c.taillight_l?.material) c.taillight_l.material.emissiveIntensity = iL * 1.2;
-        if (c.taillight_r?.material) c.taillight_r.material.emissiveIntensity = iR * 1.2;
-      } else {
-        [c.taillight_l, c.taillight_r].forEach(m => {
-          if (m?.material && Math.abs(m.material.emissiveIntensity - 1.2) > 0.01)
-            m.material.emissiveIntensity += (1.2 - m.material.emissiveIntensity) * SPEED;
-        });
-      }
-    } else {
-      [c.taillight_l, c.taillight_r].forEach(m => {
-        if (m?.material && m.material.emissiveIntensity > 0.001)
-          m.material.emissiveIntensity *= (1 - SPEED);
-      });
-    }
-
-    // Fog lights
-    [
-      { mesh: c.foglight_l,    key: "foglight_l_intensity",    on: s.foglight_l,    maxI: 1.0 },
-      { mesh: c.foglight_r,    key: "foglight_r_intensity",    on: s.foglight_r,    maxI: 1.0 },
-      { mesh: c.foglight_rear, key: "foglight_rear_intensity", on: s.foglight_rear, maxI: 1.3 },
-    ].forEach(({ mesh, key, on, maxI }) => {
-      if (!mesh?.material) return;
-      const diff = (on ? maxI : 0) - t[key];
-      if (Math.abs(diff) > 0.001) {
-        t[key] += diff * SPEED;
-        mesh.material.emissiveIntensity = t[key];
-      }
-    });
-  });
-
-  // ── JSX — geometry unchanged, material props now derived from state ─────────
+  }, [c])
   return (
-    <group ref={groupRef}>
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* CHASSIS FRAME */}
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      <mesh name="chassis" position={[0, 0.65, 0]} castShadow receiveShadow>
-        <boxGeometry args={[1.68, 0.1, 3.85]} />
-        <meshPhysicalMaterial
-          color={selectedColor.hex}
-          metalness={bodyMetal}
-          roughness={bodyRough}
-        />
-      </mesh>
-
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* FRONT BONNET */}
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* position = rear hinge (cowl edge z=0.605); translate shifts body to local z=[0,+1.33].
-          y=1.14 → deck top 1.20 flush with fender shoulder line */}
-      <mesh name="bonnet" position={[0, 1.14, 0.605]} castShadow receiveShadow>
-        <boxGeometry ref={bonnetGeo} args={[1.68, 0.12, 1.33]} />
-        <meshPhysicalMaterial
-          color={selectedColor.hex}
-          metalness={bodyMetal}
-          roughness={bodyRough}
-          clearcoat={bodyClearcoat}
-        />
-      </mesh>
-
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* WINDSHIELD — raked ~25° from vertical (bottom z≈0.79, top z≈0.56) */}
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      <mesh name="windshield" position={[0, 1.43, 0.675]} rotation={[-0.435, 0, 0]} castShadow>
-        <boxGeometry args={[1.58, 0.54, 0.06]} />
-        <meshPhysicalMaterial
-          color="#7799bb"
-          transmission={0.93}
-          roughness={0.01}
-          ior={1.52}
-          thickness={0.05}
-          side={THREE.DoubleSide}
-        />
-      </mesh>
-
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* ADAS CAMERA */}
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* ADAS camera mount — on interior face of windshield near top (~z≈0.59 at y=1.54) */}
-      <mesh position={[0, 1.47, 0.62]} castShadow>
-        <boxGeometry args={[0.18, 0.04, 0.06]} />
-        <meshStandardMaterial color="#2a2a2a" metalness={0.5} roughness={0.4} />
-      </mesh>
-      <mesh name="adas_camera" position={[0, 1.54, 0.60]} castShadow receiveShadow>
-        <boxGeometry args={[0.14, 0.09, 0.12]} />
-        <meshStandardMaterial color="#1a1a1a" metalness={0.75} roughness={0.2} />
-      </mesh>
-      <mesh position={[0, 1.56, 0.64]} castShadow receiveShadow>
-        <cylinderGeometry args={[0.05, 0.05, 0.04, 16]} />
-        <meshPhysicalMaterial color="#1a1a1a" metalness={0.9} roughness={0.1} clearcoat={0.9} />
-      </mesh>
-      <mesh position={[0, 1.56, 0.67]} castShadow receiveShadow>
-        <cylinderGeometry args={[0.042, 0.042, 0.02, 16]} />
-        <meshPhysicalMaterial color="#4444ff" metalness={0.98} roughness={0.02} clearcoat={1.0} transmission={0.5} />
-      </mesh>
-      <mesh position={[0.06, 1.54, 0.60]} castShadow>
-        <sphereGeometry args={[0.01, 10, 10]} />
-        <meshPhysicalMaterial color="#00ff00" emissive="#00cc00" emissiveIntensity={1.2} metalness={0.4} roughness={0.2} />
-      </mesh>
-      <mesh position={[-0.06, 1.54, 0.60]} castShadow>
-        <sphereGeometry args={[0.008, 8, 8]} />
-        <meshStandardMaterial color="#555" metalness={0.3} roughness={0.6} />
-      </mesh>
-
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* FRONT BUMPER */}
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      <mesh name="bumper_front" position={[0, 0.825, 1.93]} castShadow>
-        <boxGeometry args={[1.68, 0.35, 0.15]} />
-        <meshStandardMaterial color="#1a1a1a" metalness={0.2} roughness={0.5} />
-      </mesh>
-
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* FRONT HEADLIGHTS */}
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* Slim LED clusters at hood line — flush with bumper face (z=2.005), not proud */}
-      <mesh name="headlight_l" position={[0.69, 1.0, 1.95]} castShadow>
-        <boxGeometry args={[0.34, 0.13, 0.10]} />
-        <meshPhysicalMaterial
-          color="#ffffff" emissive="#ffff88" emissiveIntensity={0}
-          metalness={0.2} roughness={0.1} toneMapped={false}
-        />
-      </mesh>
-      <mesh name="headlight_r" position={[-0.69, 1.0, 1.95]} castShadow>
-        <boxGeometry args={[0.34, 0.13, 0.10]} />
-        <meshPhysicalMaterial
-          color="#ffffff" emissive="#ffff88" emissiveIntensity={0}
-          metalness={0.2} roughness={0.1} toneMapped={false}
-        />
-      </mesh>
-
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* FRONT FOG LIGHTS — lower bumper corners */}
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      <mesh name="foglight_l" position={[0.62, 0.70, 1.96]} castShadow>
-        <boxGeometry args={[0.18, 0.10, 0.10]} />
-        <meshPhysicalMaterial
-          color="#ffffcc" emissive="#ffee44" emissiveIntensity={0}
-          metalness={0.1} roughness={0.15} toneMapped={false}
-        />
-      </mesh>
-      <mesh name="foglight_r" position={[-0.62, 0.70, 1.96]} castShadow>
-        <boxGeometry args={[0.18, 0.10, 0.10]} />
-        <meshPhysicalMaterial
-          color="#ffffcc" emissive="#ffee44" emissiveIntensity={0}
-          metalness={0.1} roughness={0.15} toneMapped={false}
-        />
-      </mesh>
-
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* REAR BUMPER */}
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      <mesh name="bumper_rear" position={[0, 0.825, -1.93]} castShadow>
-        <boxGeometry args={[1.68, 0.35, 0.15]} />
-        <meshStandardMaterial color="#1a1a1a" metalness={0.2} roughness={0.5} />
-      </mesh>
-
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* REAR TAILLIGHTS */}
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* Slim wrap clusters at deck height — flush with bumper face (z=−2.005), not proud */}
-      <mesh name="taillight_l" position={[0.66, 0.975, -1.96]} castShadow>
-        <boxGeometry args={[0.36, 0.11, 0.09]} />
-        <meshPhysicalMaterial
-          color="#ff3333" emissive="#cc0000" emissiveIntensity={0}
-          metalness={0.2} roughness={0.1} toneMapped={false}
-        />
-      </mesh>
-      <mesh name="taillight_r" position={[-0.66, 0.975, -1.96]} castShadow>
-        <boxGeometry args={[0.36, 0.11, 0.09]} />
-        <meshPhysicalMaterial
-          color="#ff3333" emissive="#cc0000" emissiveIntensity={0}
-          metalness={0.2} roughness={0.1} toneMapped={false}
-        />
-      </mesh>
-
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* PANORAMIC ROOF */}
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      <mesh name="roof" position={[0, 1.64, -0.195]} castShadow receiveShadow>
-        <boxGeometry args={[1.68, 0.08, 1.61]} />
-        <meshPhysicalMaterial
-          color="#7799bb" transmission={0.90}
-          roughness={0.02} ior={1.52} thickness={0.04} clearcoat={0.7}
-          side={THREE.DoubleSide}
-        />
-      </mesh>
-      <mesh position={[ 0.84, 1.64, -0.195]} castShadow>
-        <boxGeometry args={[0.12, 0.08, 1.61]} />
-        <meshStandardMaterial color="#2a2a2a" metalness={0.7} roughness={0.3} />
-      </mesh>
-      <mesh position={[-0.84, 1.64, -0.195]} castShadow>
-        <boxGeometry args={[0.12, 0.08, 1.61]} />
-        <meshStandardMaterial color="#2a2a2a" metalness={0.7} roughness={0.3} />
-      </mesh>
-      <mesh position={[0, 1.64,  0.615]} castShadow>
-        <boxGeometry args={[1.68, 0.08, 0.12]} />
-        <meshStandardMaterial color="#2a2a2a" metalness={0.7} roughness={0.3} />
-      </mesh>
-      <mesh position={[0, 1.64, -1.005]} castShadow>
-        <boxGeometry args={[1.68, 0.08, 0.12]} />
-        <meshStandardMaterial color="#2a2a2a" metalness={0.7} roughness={0.3} />
-      </mesh>
-
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* REAR WINDOW — angled ~12° from vertical (bottom z≈-0.90, top z≈-1.00) */}
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      <mesh name="rear_window" position={[0, 1.42, -0.95]} rotation={[0.20, 0, 0]} castShadow>
-        <boxGeometry args={[1.58, 0.50, 0.06]} />
-        <meshPhysicalMaterial
-          color="#7799bb" transmission={0.93}
-          roughness={0.01} ior={1.52} thickness={0.05}
-          side={THREE.DoubleSide}
-        />
-      </mesh>
-      {/* C-pillar frames — match rear window angle */}
-      <mesh position={[ 0.84, 1.42, -0.95]} rotation={[0.20, 0, 0]} castShadow>
-        <boxGeometry args={[0.10, 0.50, 0.06]} />
-        <meshStandardMaterial color="#2a2a2a" metalness={0.7} roughness={0.3} />
-      </mesh>
-      <mesh position={[-0.84, 1.42, -0.95]} rotation={[0.20, 0, 0]} castShadow>
-        <boxGeometry args={[0.10, 0.50, 0.06]} />
-        <meshStandardMaterial color="#2a2a2a" metalness={0.7} roughness={0.3} />
-      </mesh>
-
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* BOOT (TRUNK) */}
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* position = front hinge (near rear window); translate shifts lid to local z=[0, -1.03].
-          y=1.14 → deck top 1.20 flush with quarter-panel shoulder line */}
-      <mesh name="boot" position={[0, 1.14, -0.90]} castShadow receiveShadow>
-        <boxGeometry ref={bootGeo} args={[1.68, 0.12, 1.03]} />
-        <meshPhysicalMaterial
-          color={selectedColor.hex}
-          metalness={bodyMetal}
-          roughness={bodyRough}
-          clearcoat={bodyClearcoat}
-        />
-      </mesh>
-
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* MAIN BODY PANELS — Honda City 3-box sedan profile                   */}
-      {/* Cabin zone: full greenhouse height. Fender/quarter: drop to hood /   */}
-      {/* trunk-deck level. Single mesh per zone eliminates z-fighting bands.  */}
-      {/* ════════════════════════════════════════════════════════════════════ */}
-
-      {/* Cabin side corner fillers — ONLY outside the door apertures so the
-          interior is visible when doors open. Front: door hinge edge (z=0.50)
-          to fender (z=0.61). Rear: rear-door edge (z=−0.80) to quarter (z=−0.90).
-          The door-gap zone (z −0.32→−0.04) is closed by the lower B-pillar. */}
-      {[0.825, -0.825].map((x) => (
-        <group key={`sidefill-${x}`}>
-          <mesh position={[x, 0.90, 0.555]} castShadow receiveShadow>
-            <boxGeometry args={[0.05, 0.60, 0.11]} />
-            <meshPhysicalMaterial color={selectedColor.hex} metalness={bodyMetal} roughness={bodyRough} clearcoat={bodyClearcoat} />
-          </mesh>
-          <mesh position={[x, 0.90, -0.85]} castShadow receiveShadow>
-            <boxGeometry args={[0.05, 0.60, 0.10]} />
-            <meshPhysicalMaterial color={selectedColor.hex} metalness={bodyMetal} roughness={bodyRough} clearcoat={bodyClearcoat} />
-          </mesh>
-        </group>
-      ))}
-
-      {/* Side sills */}
-      <mesh position={[ 0.75, 0.65, 0]} castShadow receiveShadow>
-        <boxGeometry args={[0.12, 0.12, 3.85]} />
-        <meshStandardMaterial color="#1a1a1a" metalness={0.4} roughness={0.5} />
-      </mesh>
-      <mesh position={[-0.75, 0.65, 0]} castShadow receiveShadow>
-        <boxGeometry args={[0.12, 0.12, 3.85]} />
-        <meshStandardMaterial color="#1a1a1a" metalness={0.4} roughness={0.5} />
-      </mesh>
-
-      {/* Front fenders — top y=1.20 matches door tops: one continuous shoulder line */}
-      <mesh position={[ 0.84, 0.90, 1.273]} castShadow receiveShadow>
-        <boxGeometry args={[0.08, 0.60, 1.325]} />
-        <meshPhysicalMaterial color={selectedColor.hex} metalness={bodyMetal} roughness={bodyRough} clearcoat={bodyClearcoat} />
-      </mesh>
-      <mesh position={[-0.84, 0.90, 1.273]} castShadow receiveShadow>
-        <boxGeometry args={[0.08, 0.60, 1.325]} />
-        <meshPhysicalMaterial color={selectedColor.hex} metalness={bodyMetal} roughness={bodyRough} clearcoat={bodyClearcoat} />
-      </mesh>
-
-      {/* Rear quarter panels — top y=1.20 matching boot deck and door tops */}
-      <mesh position={[ 0.84, 0.90, -1.415]} castShadow receiveShadow>
-        <boxGeometry args={[0.08, 0.60, 1.03]} />
-        <meshPhysicalMaterial color={selectedColor.hex} metalness={bodyMetal} roughness={bodyRough} clearcoat={bodyClearcoat} />
-      </mesh>
-      <mesh position={[-0.84, 0.90, -1.415]} castShadow receiveShadow>
-        <boxGeometry args={[0.08, 0.60, 1.03]} />
-        <meshPhysicalMaterial color={selectedColor.hex} metalness={bodyMetal} roughness={bodyRough} clearcoat={bodyClearcoat} />
-      </mesh>
-
-      {/* A-pillar body-colour shoulder — bridges shoulder line (y=1.20) to greenhouse rail (y=1.47);
-          z 0.51→0.67 closes the slit ahead of the front-door glass edge (z=0.48) */}
-      <mesh position={[ 0.84, 1.335, 0.59]} castShadow receiveShadow>
-        <boxGeometry args={[0.09, 0.27, 0.16]} />
-        <meshPhysicalMaterial color={selectedColor.hex} metalness={bodyMetal} roughness={bodyRough} clearcoat={bodyClearcoat} />
-      </mesh>
-      <mesh position={[-0.84, 1.335, 0.59]} castShadow receiveShadow>
-        <boxGeometry args={[0.09, 0.27, 0.16]} />
-        <meshPhysicalMaterial color={selectedColor.hex} metalness={bodyMetal} roughness={bodyRough} clearcoat={bodyClearcoat} />
-      </mesh>
-
-      {/* A-pillar dark cap — greenhouse rail to roof (y=1.47→1.60) */}
-      <mesh position={[ 0.84, 1.535, 0.61]} castShadow receiveShadow>
-        <boxGeometry args={[0.08, 0.13, 0.12]} />
-        <meshStandardMaterial color="#2a2a2a" metalness={0.5} roughness={0.4} />
-      </mesh>
-      <mesh position={[-0.84, 1.535, 0.61]} castShadow receiveShadow>
-        <boxGeometry args={[0.08, 0.13, 0.12]} />
-        <meshStandardMaterial color="#2a2a2a" metalness={0.5} roughness={0.4} />
-      </mesh>
-
-      {/* C-pillar dark post — upper rear cabin corner, y=1.20→1.47, gives sedan C-pillar appearance */}
-      <mesh position={[ 0.845, 1.335, -0.83]} castShadow receiveShadow>
-        <boxGeometry args={[0.09, 0.27, 0.14]} />
-        <meshStandardMaterial color="#1a1a1a" metalness={0.5} roughness={0.4} />
-      </mesh>
-      <mesh position={[-0.845, 1.335, -0.83]} castShadow receiveShadow>
-        <boxGeometry args={[0.09, 0.27, 0.14]} />
-        <meshStandardMaterial color="#1a1a1a" metalness={0.5} roughness={0.4} />
-      </mesh>
-
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* REAR CABIN BULKHEAD — closes trunk front / prevents hollow interior  */}
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* Main bulkhead wall — from chassis top to boot lid bottom (1.08) */}
-      <mesh position={[0, 0.85, -0.90]} castShadow receiveShadow>
-        <boxGeometry args={[1.60, 0.46, 0.06]} />
-        <meshStandardMaterial color="#1c1c1c" metalness={0.2} roughness={0.7} />
-      </mesh>
-      {/* Parcel shelf — horizontal ledge visible through rear window */}
-      <mesh position={[0, 1.16, -0.96]} castShadow receiveShadow>
-        <boxGeometry args={[1.56, 0.04, 0.14]} />
-        <meshStandardMaterial color="#2a2a2a" metalness={0.3} roughness={0.5} />
-      </mesh>
-
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* TRUNK ENCLOSURE                                                      */}
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* Trunk floor */}
-      <mesh position={[0, 0.695, -1.415]} castShadow receiveShadow>
-        <boxGeometry args={[1.52, 0.05, 1.03]} />
-        <meshStandardMaterial color="#252525" metalness={0.2} roughness={0.8} />
-      </mesh>
-      {/* Rear body fascia — body-colour centre panel between taillights (narrowed to clear clusters) */}
-      <mesh position={[0, 0.925, -1.935]} castShadow receiveShadow>
-        <boxGeometry args={[0.92, 0.55, 0.06]} />
-        <meshPhysicalMaterial color={selectedColor.hex} metalness={bodyMetal} roughness={bodyRough} clearcoat={bodyClearcoat} />
-      </mesh>
-
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* FRONT GRILLE / FASCIA                                               */}
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* Centre grille panel between headlights (narrowed so headlight clusters clear it) */}
-      <mesh position={[0, 0.875, 1.955]} castShadow>
-        <boxGeometry args={[1.00, 0.26, 0.09]} />
-        <meshStandardMaterial color="#111111" metalness={0.65} roughness={0.35} />
-      </mesh>
-      {/* Upper front face — body-colour strip above grille, below hood (top y=1.20 meets raised hood) */}
-      <mesh position={[0, 1.10, 1.940]} castShadow receiveShadow>
-        <boxGeometry args={[1.68, 0.20, 0.06]} />
-        <meshPhysicalMaterial color={selectedColor.hex} metalness={bodyMetal} roughness={bodyRough} clearcoat={bodyClearcoat} />
-      </mesh>
-
-      {/* Underbody */}
-      <mesh position={[0, 0.64, 0]} castShadow receiveShadow>
-        <boxGeometry args={[1.4, 0.08, 3.5]} />
-        <meshStandardMaterial color="#1a1a1a" metalness={0.3} roughness={0.6} />
-      </mesh>
-
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* DOORS — geometry translate applied once via useEffect refs          */}
-      {/* ════════════════════════════════════════════════════════════════════ */}
-
-      {/* FRONT LEFT DOOR — mirror is a child so it swings with the door */}
-      <group name="door_fl" position={[0.84, 0.90, 0.50]}>
-        <mesh castShadow receiveShadow>
-          <boxGeometry ref={doorGeoFL} args={[0.08, 0.60, 0.60]} />
-          <meshPhysicalMaterial color={selectedColor.hex} metalness={bodyMetal} roughness={bodyRough} clearcoat={bodyClearcoat} />
-        </mesh>
-        {/* Glass channel — dark pocket where window retracts into */}
-        <mesh position={[0, 0.20, -0.30]}>
-          <boxGeometry args={[0.074, 0.38, 0.58]} />
-          <meshStandardMaterial color="#111" metalness={0.2} roughness={0.8} />
-        </mesh>
-        <mesh name="window_fl" position={[0, 0.44, -0.30]} castShadow receiveShadow>
-          <boxGeometry args={[0.08, 0.28, 0.56]} />
-          <meshPhysicalMaterial color="#87ceeb" metalness={0} roughness={0.1} clearcoat={0.9} opacity={0.38} transparent side={THREE.DoubleSide} />
-        </mesh>
-        <mesh position={[0, 0.57, -0.30]} castShadow receiveShadow>
-          <boxGeometry args={[0.08, 0.06, 0.60]} />
-          <meshStandardMaterial color="#333" metalness={0.8} roughness={0.2} />
-        </mesh>
-        {/* Ambient strip — inner face, swings with the door */}
-        <mesh name="ambient_door_fl" position={[-0.046, 0.10, -0.32]}>
-          <boxGeometry args={[0.012, 0.04, 0.50]} />
-          <meshStandardMaterial color={ambientColor} emissive={ambientColor}
-            emissiveIntensity={(ambientBrightness / 100) * 1.4} toneMapped={false} />
-        </mesh>
-        {/* Chrome handle — outer face, swings with the door */}
-        <mesh position={[0.046, 0.15, -0.38]} castShadow>
-          <boxGeometry args={[0.012, 0.04, 0.16]} />
-          <meshStandardMaterial color="#cccccc" metalness={0.92} roughness={0.08} />
-        </mesh>
-        {/* LEFT MIRROR — at window line (world y≈1.23); rotation.y=0 deployed, +75° folded rearward */}
-        <group name="mirror_left" position={[0.042, 0.33, -0.03]}>
-          {/* Stalk arm — body colour, 9 cm long outward */}
-          <mesh position={[0.048, 0, 0]} castShadow receiveShadow>
-            <boxGeometry args={[0.09, 0.06, 0.06]} />
-            <meshPhysicalMaterial color={selectedColor.hex} metalness={bodyMetal} roughness={bodyRough} clearcoat={0.7} />
-          </mesh>
-          {/* Housing pod — compact: 8 cm wide × 16 cm tall × 18 cm deep
-              When folded at -PI/2: 18 cm Z-length becomes X-extent → only 9 cm past body face */}
-          <mesh position={[0.11, 0.01, 0]} castShadow receiveShadow>
-            <boxGeometry args={[0.08, 0.16, 0.18]} />
-            <meshPhysicalMaterial color="#111111" metalness={0.45} roughness={0.25} clearcoat={0.95} />
-          </mesh>
-          {/* Glass — rear face of pod, faces rearward when deployed */}
-          <mesh name="mirror_glass_left" position={[0.12, 0.02, -0.088]} castShadow receiveShadow>
-            <boxGeometry args={[0.062, 0.132, 0.012]} />
-            <meshPhysicalMaterial color="#b0c8d8" metalness={0.98} roughness={0.02} clearcoat={1.0} />
-          </mesh>
-          {/* Turn-signal strip — front face of pod, faces forward when deployed */}
-          <mesh position={[0.11, -0.05, 0.088]}>
-            <boxGeometry args={[0.06, 0.030, 0.010]} />
-            <meshPhysicalMaterial color="#ff8c00" emissive="#ff6000" emissiveIntensity={0}
-              roughness={0.3} toneMapped={false} />
-          </mesh>
-        </group>
-      </group>
-
-      {/* FRONT RIGHT DOOR — mirror is a child so it swings with the door */}
-      <group name="door_fr" position={[-0.84, 0.90, 0.50]}>
-        <mesh castShadow receiveShadow>
-          <boxGeometry ref={doorGeoFR} args={[0.08, 0.60, 0.60]} />
-          <meshPhysicalMaterial color={selectedColor.hex} metalness={bodyMetal} roughness={bodyRough} clearcoat={bodyClearcoat} />
-        </mesh>
-        {/* Glass channel */}
-        <mesh position={[0, 0.20, -0.30]}>
-          <boxGeometry args={[0.074, 0.38, 0.58]} />
-          <meshStandardMaterial color="#111" metalness={0.2} roughness={0.8} />
-        </mesh>
-        <mesh name="window_fr" position={[0, 0.44, -0.30]} castShadow receiveShadow>
-          <boxGeometry args={[0.08, 0.28, 0.56]} />
-          <meshPhysicalMaterial color="#87ceeb" metalness={0} roughness={0.1} clearcoat={0.9} opacity={0.38} transparent side={THREE.DoubleSide} />
-        </mesh>
-        <mesh position={[0, 0.57, -0.30]} castShadow receiveShadow>
-          <boxGeometry args={[0.08, 0.06, 0.60]} />
-          <meshStandardMaterial color="#333" metalness={0.8} roughness={0.2} />
-        </mesh>
-        {/* Ambient strip — inner face, swings with the door */}
-        <mesh name="ambient_door_fr" position={[0.046, 0.10, -0.32]}>
-          <boxGeometry args={[0.012, 0.04, 0.50]} />
-          <meshStandardMaterial color={ambientColor} emissive={ambientColor}
-            emissiveIntensity={(ambientBrightness / 100) * 1.4} toneMapped={false} />
-        </mesh>
-        {/* Chrome handle — outer face, swings with the door */}
-        <mesh position={[-0.046, 0.15, -0.38]} castShadow>
-          <boxGeometry args={[0.012, 0.04, 0.16]} />
-          <meshStandardMaterial color="#cccccc" metalness={0.92} roughness={0.08} />
-        </mesh>
-        {/* RIGHT MIRROR — at window line (world y≈1.23); rotation.y=0 deployed, −75° folded rearward */}
-        <group name="mirror_right" position={[-0.042, 0.33, -0.03]}>
-          {/* Stalk arm */}
-          <mesh position={[-0.048, 0, 0]} castShadow receiveShadow>
-            <boxGeometry args={[0.09, 0.06, 0.06]} />
-            <meshPhysicalMaterial color={selectedColor.hex} metalness={bodyMetal} roughness={bodyRough} clearcoat={0.7} />
-          </mesh>
-          {/* Housing pod */}
-          <mesh position={[-0.11, 0.01, 0]} castShadow receiveShadow>
-            <boxGeometry args={[0.08, 0.16, 0.18]} />
-            <meshPhysicalMaterial color="#111111" metalness={0.45} roughness={0.25} clearcoat={0.95} />
-          </mesh>
-          {/* Glass — rear face */}
-          <mesh name="mirror_glass_right" position={[-0.12, 0.02, -0.088]} castShadow receiveShadow>
-            <boxGeometry args={[0.062, 0.132, 0.012]} />
-            <meshPhysicalMaterial color="#b0c8d8" metalness={0.98} roughness={0.02} clearcoat={1.0} />
-          </mesh>
-          {/* Turn-signal strip — front face */}
-          <mesh position={[-0.11, -0.05, 0.088]}>
-            <boxGeometry args={[0.06, 0.030, 0.010]} />
-            <meshPhysicalMaterial color="#ff8c00" emissive="#ff6000" emissiveIntensity={0}
-              roughness={0.3} toneMapped={false} />
-          </mesh>
-        </group>
-      </group>
-
-      {/* REAR LEFT DOOR */}
-      <group name="door_rl" position={[0.84, 0.90, -0.30]}>
-        <mesh castShadow receiveShadow>
-          <boxGeometry ref={doorGeoRL} args={[0.08, 0.60, 0.50]} />
-          <meshPhysicalMaterial color={selectedColor.hex} metalness={bodyMetal} roughness={bodyRough} clearcoat={bodyClearcoat} />
-        </mesh>
-        {/* Glass channel */}
-        <mesh position={[0, 0.20, -0.25]}>
-          <boxGeometry args={[0.074, 0.38, 0.48]} />
-          <meshStandardMaterial color="#111" metalness={0.2} roughness={0.8} />
-        </mesh>
-        <mesh name="window_rl" position={[0, 0.44, -0.25]} castShadow receiveShadow>
-          <boxGeometry args={[0.08, 0.28, 0.46]} />
-          <meshPhysicalMaterial color="#87ceeb" metalness={0} roughness={0.1} clearcoat={0.9} opacity={0.38} transparent side={THREE.DoubleSide} />
-        </mesh>
-        <mesh position={[0, 0.57, -0.25]} castShadow receiveShadow>
-          <boxGeometry args={[0.08, 0.06, 0.50]} />
-          <meshStandardMaterial color="#333" metalness={0.8} roughness={0.2} />
-        </mesh>
-        {/* Ambient strip — inner face, swings with the door */}
-        <mesh name="ambient_door_rl" position={[-0.046, 0.10, -0.12]}>
-          <boxGeometry args={[0.012, 0.04, 0.42]} />
-          <meshStandardMaterial color={ambientColor} emissive={ambientColor}
-            emissiveIntensity={(ambientBrightness / 100) * 1.4} toneMapped={false} />
-        </mesh>
-        {/* Chrome handle — outer face, swings with the door */}
-        <mesh position={[0.046, 0.15, -0.22]} castShadow>
-          <boxGeometry args={[0.012, 0.04, 0.16]} />
-          <meshStandardMaterial color="#cccccc" metalness={0.92} roughness={0.08} />
-        </mesh>
-      </group>
-
-      {/* REAR RIGHT DOOR */}
-      <group name="door_rr" position={[-0.84, 0.90, -0.30]}>
-        <mesh castShadow receiveShadow>
-          <boxGeometry ref={doorGeoRR} args={[0.08, 0.60, 0.50]} />
-          <meshPhysicalMaterial color={selectedColor.hex} metalness={bodyMetal} roughness={bodyRough} clearcoat={bodyClearcoat} />
-        </mesh>
-        {/* Glass channel */}
-        <mesh position={[0, 0.20, -0.25]}>
-          <boxGeometry args={[0.074, 0.38, 0.48]} />
-          <meshStandardMaterial color="#111" metalness={0.2} roughness={0.8} />
-        </mesh>
-        <mesh name="window_rr" position={[0, 0.44, -0.25]} castShadow receiveShadow>
-          <boxGeometry args={[0.08, 0.28, 0.46]} />
-          <meshPhysicalMaterial color="#87ceeb" metalness={0} roughness={0.1} clearcoat={0.9} opacity={0.38} transparent side={THREE.DoubleSide} />
-        </mesh>
-        <mesh position={[0, 0.57, -0.25]} castShadow receiveShadow>
-          <boxGeometry args={[0.08, 0.06, 0.50]} />
-          <meshStandardMaterial color="#333" metalness={0.8} roughness={0.2} />
-        </mesh>
-        {/* Ambient strip — inner face, swings with the door */}
-        <mesh name="ambient_door_rr" position={[0.046, 0.10, -0.12]}>
-          <boxGeometry args={[0.012, 0.04, 0.42]} />
-          <meshStandardMaterial color={ambientColor} emissive={ambientColor}
-            emissiveIntensity={(ambientBrightness / 100) * 1.4} toneMapped={false} />
-        </mesh>
-        {/* Chrome handle — outer face, swings with the door */}
-        <mesh position={[-0.046, 0.15, -0.22]} castShadow>
-          <boxGeometry args={[0.012, 0.04, 0.16]} />
-          <meshStandardMaterial color="#cccccc" metalness={0.92} roughness={0.08} />
-        </mesh>
-      </group>
-
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* UPPER GREENHOUSE — rails above windows (y≈1.47 → 1.60) + B-pillar  */}
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* Left greenhouse rail — spans full cabin width z=−0.90→0.61 (matches cabin side panel) */}
-      <mesh position={[ 0.84, 1.535, -0.145]} castShadow receiveShadow>
-        <boxGeometry args={[0.08, 0.13, 1.51]} />
-        <meshStandardMaterial color="#2a2a2a" metalness={0.5} roughness={0.4} />
-      </mesh>
-      {/* Right greenhouse rail */}
-      <mesh position={[-0.84, 1.535, -0.145]} castShadow receiveShadow>
-        <boxGeometry args={[0.08, 0.13, 1.51]} />
-        <meshStandardMaterial color="#2a2a2a" metalness={0.5} roughness={0.4} />
-      </mesh>
-      {/* B-pillars, two-part: body-colour below beltline (fills the door gap),
-          dark only in the glass zone — no more floor-to-roof black slab.
-          Depth 0.28 closes the slit between door glass edges (z −0.32→−0.04) */}
-      {[0.845, -0.845].map((x) => (
-        <group key={`bpillar-${x}`}>
-          <mesh position={[x, 0.90, -0.18]} castShadow>
-            <boxGeometry args={[0.09, 0.60, 0.28]} />
-            <meshPhysicalMaterial color={selectedColor.hex} metalness={bodyMetal} roughness={bodyRough} clearcoat={bodyClearcoat} />
-          </mesh>
-          <mesh position={[x, 1.38, -0.18]} castShadow>
-            <boxGeometry args={[0.09, 0.36, 0.28]} />
-            <meshStandardMaterial color="#1a1a1a" metalness={0.4} roughness={0.5} />
-          </mesh>
-        </group>
-      ))}
-
-      {/* Side mirrors are now children of door_fl / door_fr above */}
-
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* WIPERS */}
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* Wipers — pivot at windshield base, tilted with glass, arm extends up local Y, sweeps around local Z */}
-      {/* Front left: pivot at x=+0.30, bottom of windshield (y=1.095, z=0.795), tilted to match -0.435 glass rake */}
-      <group name="wiper_front_left" position={[0.30, 1.175, 0.795]} rotation={[-0.435, 0, -Math.PI / 6]}>
-        {/* arm — extends up the glass along local Y */}
-        <mesh position={[0, 0.18, 0.018]} castShadow receiveShadow>
-          <boxGeometry args={[0.030, 0.36, 0.022]} />
-          <meshStandardMaterial color="#1c1c1c" metalness={0.75} roughness={0.2} />
-        </mesh>
-        {/* rubber blade — flush with glass, slightly longer than arm */}
-        <mesh position={[0, 0.21, 0.008]} castShadow receiveShadow>
-          <boxGeometry args={[0.016, 0.42, 0.010]} />
-          <meshStandardMaterial color="#111" metalness={0.05} roughness={0.95} />
-        </mesh>
-      </group>
-
-      {/* Front right: mirror of left */}
-      <group name="wiper_front_right" position={[-0.30, 1.175, 0.795]} rotation={[-0.435, 0, Math.PI / 6]}>
-        <mesh position={[0, 0.18, 0.018]} castShadow receiveShadow>
-          <boxGeometry args={[0.030, 0.36, 0.022]} />
-          <meshStandardMaterial color="#1c1c1c" metalness={0.75} roughness={0.2} />
-        </mesh>
-        <mesh position={[0, 0.21, 0.008]} castShadow receiveShadow>
-          <boxGeometry args={[0.016, 0.42, 0.010]} />
-          <meshStandardMaterial color="#111" metalness={0.05} roughness={0.95} />
-        </mesh>
-      </group>
-
-      {/* Rear wiper — pivot at bottom centre of rear window (y=1.10, z=-0.90), tilted with glass (+0.20 rad) */}
-      <group name="wiper_rear" position={[0, 1.18, -0.90]} rotation={[0.20, 0, -Math.PI / 6]}>
-        <mesh position={[0, 0.15, 0.018]} castShadow receiveShadow>
-          <boxGeometry args={[0.030, 0.30, 0.022]} />
-          <meshStandardMaterial color="#1c1c1c" metalness={0.75} roughness={0.2} />
-        </mesh>
-        <mesh position={[0, 0.17, 0.008]} castShadow receiveShadow>
-          <boxGeometry args={[0.016, 0.34, 0.010]} />
-          <meshStandardMaterial color="#111" metalness={0.05} roughness={0.95} />
-        </mesh>
-      </group>
-
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* A-PILLAR FRAMES — angled to match windshield rake                   */}
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      <mesh position={[ 0.84, 1.43, 0.675]} rotation={[-0.435, 0, 0]} castShadow>
-        <boxGeometry args={[0.10, 0.54, 0.06]} />
-        <meshStandardMaterial color="#2a2a2a" metalness={0.7} roughness={0.3} />
-      </mesh>
-      <mesh position={[-0.84, 1.43, 0.675]} rotation={[-0.435, 0, 0]} castShadow>
-        <boxGeometry args={[0.10, 0.54, 0.06]} />
-        <meshStandardMaterial color="#2a2a2a" metalness={0.7} roughness={0.3} />
-      </mesh>
-
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* WHEELS — rim material driven by selectedWheel                       */}
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* Tire r=0.34, centre y=0.51 → bottom at 0.17 = ground plane, flush footprint.
-          x=±0.795 tucks the tire face (0.885) flush with the body side (0.88).
-          Group local axes after Rz(90°): Y = wheel axle (world X), X-Z = wheel disc plane. */}
-      {[
-        [ 0.795, 0.51,  1.2],
-        [-0.795, 0.51,  1.2],
-        [ 0.795, 0.51, -1.2],
-        [-0.795, 0.51, -1.2],
-      ].map(([x, y, z], i) => (
-        <group key={i} position={[x, y, z]} rotation={[0, 0, Math.PI / 2]}>
-          {/* Tire */}
-          <mesh castShadow>
-            <cylinderGeometry args={[0.34, 0.34, 0.19, 32]} />
-            <meshStandardMaterial color="#0d0d0d" roughness={0.85} />
-          </mesh>
-          {/* Brake disc — visible between spokes */}
-          <mesh>
-            <cylinderGeometry args={[0.15, 0.15, 0.03, 24]} />
-            <meshStandardMaterial color="#8a8a8a" metalness={0.9} roughness={0.35} />
-          </mesh>
-          {/* Rim outer lip — torus rotated into the wheel-disc (local X-Z) plane */}
-          <mesh rotation={[Math.PI / 2, 0, 0]}>
-            <torusGeometry args={[0.20, 0.025, 12, 32]} />
-            <meshStandardMaterial
-              color={rim.color}
-              metalness={rim.metalness}
-              roughness={rim.roughness}
-            />
-          </mesh>
-          {/* 5 spokes — radiate in the wheel-disc plane */}
-          {[0, 1, 2, 3, 4].map((s) => (
-            <group key={s} rotation={[0, (s * 2 * Math.PI) / 5, 0]}>
-              <mesh position={[0, 0, 0.105]} castShadow>
-                <boxGeometry args={[0.05, 0.20, 0.17]} />
-                <meshStandardMaterial
-                  color={rim.color}
-                  metalness={rim.metalness}
-                  roughness={rim.roughness}
-                />
-              </mesh>
-            </group>
-          ))}
-          {/* Centre hub */}
-          <mesh>
-            <cylinderGeometry args={[0.06, 0.06, 0.21, 16]} />
-            <meshStandardMaterial
-              color={rim.color}
-              metalness={rim.metalness}
-              roughness={rim.roughness}
-            />
-          </mesh>
-        </group>
-      ))}
-
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* WHEEL ARCH RINGS — dark torus on each outer body face, radius > tyre */}
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {[
-        [ 0.885, 0.51,  1.2],
-        [-0.885, 0.51,  1.2],
-        [ 0.885, 0.51, -1.2],
-        [-0.885, 0.51, -1.2],
-      ].map(([x, y, z], i) => (
-        <mesh key={`arch-${i}`} position={[x, y, z]} rotation={[0, Math.PI / 2, 0]}>
-          <torusGeometry args={[0.375, 0.026, 8, 40]} />
-          <meshStandardMaterial color="#111111" metalness={0.25} roughness={0.70} />
-        </mesh>
-      ))}
-
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* FRONT LOWER LIP / AIR DAM + LOWER GRILLE */}
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      <mesh position={[0, 0.65, 1.944]} castShadow>
-        <boxGeometry args={[1.38, 0.08, 0.09]} />
-        <meshStandardMaterial color="#1a1a1a" metalness={0.3} roughness={0.55} />
-      </mesh>
-      <mesh position={[0, 0.74, 1.944]} castShadow>
-        <boxGeometry args={[1.10, 0.12, 0.06]} />
-        <meshStandardMaterial color="#0d0d0d" metalness={0.4} roughness={0.5} />
-      </mesh>
-
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* REAR DIFFUSER STRIP */}
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      <mesh position={[0, 0.66, -1.944]} castShadow>
-        <boxGeometry args={[1.20, 0.06, 0.08]} />
-        <meshStandardMaterial color="#1a1a1a" metalness={0.25} roughness={0.6} />
-      </mesh>
-
-      {/* REAR FOG LAMP — single bright red unit, low in the bumper (driver side) */}
-      <mesh name="foglight_rear" position={[-0.35, 0.72, -1.99]} castShadow>
-        <boxGeometry args={[0.16, 0.07, 0.05]} />
-        <meshPhysicalMaterial
-          color="#aa2222" emissive="#ff2200" emissiveIntensity={0}
-          metalness={0.1} roughness={0.2} toneMapped={false}
-        />
-      </mesh>
-
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* COCKPIT — steering wheel & seats live in InteriorModel (RHD).        */}
-      {/* The duplicate LHD set that used to render here was removed: two      */}
-      {/* steering wheels on opposite sides were visible through the glass.    */}
-      {/* ════════════════════════════════════════════════════════════════════ */}
-
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* INTERIOR AMBIENT LIGHT STRIPS — emissive driven by ambientColor/Brightness */}
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* Dash underglow strip */}
-      <mesh name="ambient_dash" position={[0, 1.08, 0.62]}>
-        <boxGeometry args={[1.30, 0.012, 0.02]} />
-        <meshStandardMaterial color={ambientColor} emissive={ambientColor}
-          emissiveIntensity={(ambientBrightness / 100) * 1.4} toneMapped={false} />
-      </mesh>
-      {/* Front footwell: driver left, passenger right */}
-      <mesh name="ambient_footwell_fl" position={[0.35, 0.70, 0.35]}>
-        <boxGeometry args={[0.30, 0.012, 0.20]} />
-        <meshStandardMaterial color={ambientColor} emissive={ambientColor}
-          emissiveIntensity={(ambientBrightness / 100) * 1.4} toneMapped={false} />
-      </mesh>
-      <mesh name="ambient_footwell_fr" position={[-0.35, 0.70, 0.35]}>
-        <boxGeometry args={[0.30, 0.012, 0.20]} />
-        <meshStandardMaterial color={ambientColor} emissive={ambientColor}
-          emissiveIntensity={(ambientBrightness / 100) * 1.4} toneMapped={false} />
-      </mesh>
-      {/* Door ambient strips moved into the door groups below — they must swing with the doors */}
-
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* PARKING SENSORS — 4 front, 4 rear                                   */}
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {[-0.55, -0.18, 0.18, 0.55].map((x, i) => (
-        <mesh key={`ps-front-${i}`} position={[x, 0.82, 1.945]} rotation={[0, 0, 0]}>
-          <cylinderGeometry args={[0.025, 0.025, 0.04, 16]} />
-          <meshStandardMaterial color="#1a1a1a" metalness={0.6} roughness={0.3} />
-        </mesh>
-      ))}
-      {[-0.50, -0.16, 0.16, 0.50].map((x, i) => (
-        <mesh key={`ps-rear-${i}`} position={[x, 0.82, -1.945]} rotation={[0, 0, 0]}>
-          <cylinderGeometry args={[0.025, 0.025, 0.04, 16]} />
-          <meshStandardMaterial color="#1a1a1a" metalness={0.6} roughness={0.3} />
-        </mesh>
-      ))}
-
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* EXHAUST PIPE — rear underside, slightly left of centre               */}
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      <mesh position={[0.25, 0.66, -1.96]} rotation={[Math.PI / 2, 0, 0]} castShadow>
-        <cylinderGeometry args={[0.045, 0.045, 0.12, 16]} />
-        <meshStandardMaterial color="#444" metalness={0.85} roughness={0.15} />
-      </mesh>
-      <mesh position={[0.25, 0.66, -1.92]} rotation={[Math.PI / 2, 0, 0]} castShadow>
-        <torusGeometry args={[0.045, 0.006, 8, 24]} />
-        <meshStandardMaterial color="#555" metalness={0.9} roughness={0.1} />
-      </mesh>
-
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* LICENSE PLATES — front and rear                                      */}
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* Plates sit ON the bumper faces (±2.005), not buried inside them */}
-      <mesh position={[0, 0.80, 2.012]} castShadow>
-        <boxGeometry args={[0.38, 0.13, 0.01]} />
-        <meshStandardMaterial color="#f5f5f0" metalness={0.05} roughness={0.7} />
-      </mesh>
-      <mesh position={[0, 0.80, -2.012]} castShadow>
-        <boxGeometry args={[0.38, 0.13, 0.01]} />
-        <meshStandardMaterial color="#f5f5f0" metalness={0.05} roughness={0.7} />
-      </mesh>
-
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* DOOR HANDLES — slim recessed chrome strip on each door               */}
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* Door handles moved into the door groups — they must swing with the doors */}
-
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      {/* FRONT TURN SIGNALS — amber strip inside headlight cluster             */}
-      {/* ════════════════════════════════════════════════════════════════════ */}
-      <mesh name="turnsignal_fl" position={[0.69, 0.91, 1.955]} castShadow>
-        <boxGeometry args={[0.30, 0.04, 0.09]} />
-        <meshPhysicalMaterial color="#ff8c00" emissive="#ff6000" emissiveIntensity={0}
-          metalness={0.1} roughness={0.2} toneMapped={false} />
-      </mesh>
-      <mesh name="turnsignal_fr" position={[-0.69, 0.91, 1.955]} castShadow>
-        <boxGeometry args={[0.30, 0.04, 0.09]} />
-        <meshPhysicalMaterial color="#ff8c00" emissive="#ff6000" emissiveIntensity={0}
-          metalness={0.1} roughness={0.2} toneMapped={false} />
-      </mesh>
-      {/* Rear turn signals — amber strip directly below taillight cluster */}
-      <mesh name="turnsignal_rl" position={[0.66, 0.89, -1.955]} castShadow>
-        <boxGeometry args={[0.28, 0.04, 0.08]} />
-        <meshPhysicalMaterial color="#ff8c00" emissive="#ff6000" emissiveIntensity={0}
-          metalness={0.1} roughness={0.2} toneMapped={false} />
-      </mesh>
-      <mesh name="turnsignal_rr" position={[-0.66, 0.89, -1.955]} castShadow>
-        <boxGeometry args={[0.28, 0.04, 0.08]} />
-        <meshPhysicalMaterial color="#ff8c00" emissive="#ff6000" emissiveIntensity={0}
-          metalness={0.1} roughness={0.2} toneMapped={false} />
-      </mesh>
-
+    <group>
+      <mesh geometry={geos.arm} material={IM.leatherDark} position={geos.armPos} />
+      <mesh geometry={geos.pocket} material={IM.hardPlastic} position={geos.pocketPos} />
+      <mesh geometry={geos.strip} material={IM.ambient} position={geos.stripPos} name={`ambient_door_${d.front ? 'f' : 'r'}${d.side > 0 ? 'l' : 'r'}`} />
+      <mesh geometry={geos.speaker} material={IM.vent} position={geos.speakerPos} rotation={[0, 0, Math.PI / 2]} />
+      <mesh geometry={geos.pull} material={IM.satin} position={geos.pullPos} />
+      {d.front && <mesh geometry={geos.sw} material={IM.pianoBlack} position={geos.swPos} />}
     </group>
-  );
+  )
+}
+
+// ── Door ────────────────────────────────────────────────────────────────────
+function Door({ k, d, doorRef, windowRef, windowMat, mirrorRef, mirrorGlassRef, frame }) {
+  const M = getCarMaterials()
+  const IM = getInteriorMaterials()
+  const S = smallGeo()
+  const handleQuat = useMemo(() => faceQuat(d.handle.normal), [d])
+  const handlePos = useMemo(() => d.handle.position.clone().addScaledVector(d.handle.normal, 0.009), [d])
+  // solidify groups: 0 outer, 1 inner, 2 vMin wall, 3 vMax wall, 4/5 u walls.
+  // The belt-side wall is vMax on the left half and vMin on the right half.
+  const lowerMats = useMemo(() => {
+    const belt = IM.belt
+    return d.side > 0 ? [M.paint, M.doorTrim, M.paint, belt, M.paint, M.paint] : [M.paint, M.doorTrim, belt, M.paint, M.paint, M.paint]
+  }, [d, M, IM])
+  const hinge = d.hinge
+  return (
+    <group ref={doorRef} name={`door_${k}`} position={hinge}>
+      <group position={[-hinge.x, -hinge.y, -hinge.z]}>
+        <mesh geometry={d.lower} material={lowerMats} castShadow receiveShadow />
+        <mesh geometry={d.sash} material={M.blackGloss} />
+        {d.quarter && <mesh geometry={d.quarter} material={M.glassFrit} renderOrder={3} />}
+        <group ref={windowRef} name={`window_${k}`}>
+          <mesh geometry={d.glass} material={windowMat} renderOrder={4} />
+        </group>
+        <mesh geometry={d.belt} material={M.blackGloss} />
+        {d.archLip && <mesh geometry={d.archLip} material={M.paint} />}
+        <mesh geometry={S.handle} material={M.paint} position={handlePos} quaternion={handleQuat} />
+        <DoorCard d={d} />
+        {d.front && (
+          <Mirror
+            ref={mirrorRef}
+            glassRef={mirrorGlassRef}
+            frame={frame}
+            side={d.side}
+            name={d.side > 0 ? 'mirror_left' : 'mirror_right'}
+            glassName={d.side > 0 ? 'mirror_glass_left' : 'mirror_glass_right'}
+          />
+        )}
+      </group>
+    </group>
+  )
+}
+
+// ── Lamps ───────────────────────────────────────────────────────────────────
+function LedModule({ frame }) {
+  const M = getCarMaterials()
+  const S = smallGeo()
+  const q = useMemo(() => yQuat(frame.normal), [frame])
+  return (
+    <group position={frame.position} quaternion={q} scale={frame.size}>
+      <mesh geometry={S.ledCup} material={M.darkChrome} />
+      <mesh geometry={S.ledLens} material={M.lights.led} />
+    </group>
+  )
+}
+
+function Headlight({ h, name }) {
+  const M = getCarMaterials()
+  return (
+    <group name={name}>
+      <mesh geometry={h.housing} material={M.lampHousing} />
+      <mesh geometry={h.walls} material={M.lampHousing} />
+      <mesh geometry={h.drl} material={M.lights.drl} />
+      <mesh geometry={h.turn} material={M.lights.turnF} />
+      {h.leds.map((f, i) => <LedModule key={i} frame={f} />)}
+      <mesh geometry={h.lens} material={M.lens} renderOrder={5} />
+    </group>
+  )
+}
+
+function Taillight({ t, name, guideMat }) {
+  const M = getCarMaterials()
+  return (
+    <group name={name}>
+      <mesh geometry={t.housing} material={M.tailHousing} />
+      <mesh geometry={t.walls} material={M.tailHousing} />
+      <mesh geometry={t.guide} material={guideMat} />
+      <mesh geometry={t.outline} material={M.lights.tailOutline} />
+      <mesh geometry={t.lens} material={M.tailLens} renderOrder={5} />
+    </group>
+  )
+}
+
+// Corner air-curtain vent with the slim LED fog lamp at its foot (2026)
+function FogLamp({ f, name }) {
+  const M = getCarMaterials()
+  return (
+    <group name={name}>
+      <mesh geometry={f.housing} material={M.grilleBack} />
+      <mesh geometry={f.walls} material={M.blackPlastic} />
+      <mesh geometry={f.fins} material={M.blackGloss} />
+      <mesh geometry={f.lamp} material={M.lights.fog} />
+    </group>
+  )
+}
+
+function Badge({ frame, ring, badge, offset = 0.006 }) {
+  const M = getCarMaterials()
+  const q = useMemo(() => faceQuat(frame.normal), [frame])
+  const p = useMemo(() => frame.position.clone().addScaledVector(frame.normal, offset), [frame, offset])
+  return (
+    <group position={p} quaternion={q}>
+      <mesh geometry={ring} material={M.chrome} />
+      <mesh geometry={badge} material={M.chrome} scale={[0.82, 0.82, 0.82]} />
+    </group>
+  )
+}
+
+function Plate({ frame, material }) {
+  const M = getCarMaterials()
+  const S = smallGeo()
+  const q = useMemo(() => faceQuat(frame.normal), [frame])
+  const p = useMemo(() => frame.position.clone().addScaledVector(frame.normal, 0.008), [frame])
+  const mats = useMemo(() => [M.blackPlastic, M.blackPlastic, M.blackPlastic, M.blackPlastic, material, M.blackPlastic], [M, material])
+  return <mesh geometry={S.plate} material={mats} position={p} quaternion={q} />
+}
+
+// ── Wipers ──────────────────────────────────────────────────────────────────
+function WiperArm({ length, blade, name, wiperRef, pivot, normal }) {
+  const M = getCarMaterials()
+  const q = useMemo(() => {
+    // local Z = glass normal, local X = +X along the cowl
+    const z = normal.clone().normalize()
+    const x = new THREE.Vector3(1, 0, 0).addScaledVector(z, -z.x).normalize()
+    const y = new THREE.Vector3().crossVectors(z, x)
+    return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, y, z))
+  }, [normal])
+  return (
+    <group position={pivot} quaternion={q}>
+      <mesh material={M.blackGloss} rotation={[Math.PI / 2, 0, 0]}>
+        <cylinderGeometry args={[0.018, 0.022, 0.03, 20]} />
+      </mesh>
+      <group ref={wiperRef} name={name}>
+        <mesh material={M.blackGloss} position={[length / 2, 0, 0.02]} rotation={[0, -0.03, 0]}>
+          <boxGeometry args={[length, 0.014, 0.012]} />
+        </mesh>
+        <mesh material={M.blackPlastic} position={[length * 0.55, 0, 0.008]}>
+          <boxGeometry args={[blade, 0.01, 0.014]} />
+        </mesh>
+      </group>
+    </group>
+  )
+}
+
+// ── Static extras: engine bay, boot well, underbody ─────────────────────────
+function Cavities() {
+  const IM = getInteriorMaterials()
+  const M = getCarMaterials()
+  const under = useMemo(() => {
+    const s = new THREE.Shape()
+    const w = 0.8
+    const l0 = -2.08
+    const l1 = 2.1
+    const r = 0.35
+    s.moveTo(-w + r, l0)
+    s.lineTo(w - r, l0)
+    s.quadraticCurveTo(w, l0, w, l0 + r)
+    s.lineTo(w, l1 - r)
+    s.quadraticCurveTo(w, l1, w - r, l1)
+    s.lineTo(-w + r, l1)
+    s.quadraticCurveTo(-w, l1, -w, l1 - r)
+    s.lineTo(-w, l0 + r)
+    s.quadraticCurveTo(-w, l0, -w + r, l0)
+    const g = new THREE.ShapeGeometry(s, 8)
+    g.rotateX(Math.PI / 2)
+    return g
+  }, [])
+  return (
+    <group>
+      <mesh geometry={under} material={M.underbody} position={[0, 0.218, 0]} />
+      {/* Engine bay — kept well inside the hood/fender skins */}
+      <mesh position={[0, 0.5, 1.535]} material={M.underbody}>
+        <boxGeometry args={[1.2, 0.4, 0.83]} />
+      </mesh>
+      <mesh position={[0, 0.66, 1.48]} material={IM.hardPlastic}>
+        <boxGeometry args={[0.6, 0.14, 0.42]} />
+      </mesh>
+      <mesh position={[0, 0.745, 1.48]} material={IM.pianoBlack}>
+        <boxGeometry args={[0.48, 0.035, 0.34]} />
+      </mesh>
+      <mesh position={[0.42, 0.68, 1.78]} material={IM.rubber}>
+        <boxGeometry args={[0.2, 0.16, 0.14]} />
+      </mesh>
+      <mesh position={[-0.46, 0.72, 1.32]} material={IM.softBeige}>
+        <boxGeometry args={[0.12, 0.1, 0.15]} />
+      </mesh>
+      {/* Firewall behind the engine bay (hides the cabin from the bay) */}
+      <mesh position={[0, 0.63, 1.0]} material={M.underbody}>
+        <boxGeometry args={[1.36, 0.64, 0.03]} />
+      </mesh>
+      {/* Boot well */}
+      <mesh position={[0, 0.66, -1.78]} material={IM.carpet}>
+        <boxGeometry args={[1.38, 0.62, 0.7]} />
+      </mesh>
+    </group>
+  )
+}
+
+// ── Vehicle ─────────────────────────────────────────────────────────────────
+export default function VehicleModel() {
+  const car = useMemo(() => buildCar(), [])
+  const M = useMemo(() => getCarMaterials(), [])
+  const S = smallGeo()
+
+  const selectedColor = useCarState((s) => s.selectedColor)
+  const paintFinish = useCarState((s) => s.paintFinish)
+  const selectedWheel = useCarState((s) => s.selectedWheel)
+  const setActiveHotspot = useCarState((s) => s.setActiveHotspot)
+
+  useEffect(() => applyPaint(M.paint, selectedColor, paintFinish), [M, selectedColor, paintFinish])
+
+  // Per-door window glass with a world-space clip plane at the beltline
+  const windowMats = useMemo(() => {
+    const out = {}
+    for (const k of DOOR_KEYS) {
+      const m = M.makeWindowGlass(k[0] === 'f' ? 0.26 : 0.4)
+      m.clippingPlanes = [new THREE.Plane(new THREE.Vector3(0, 1, 0), -car.doors[k].glassClipY)]
+      out[k] = m
+    }
+    return out
+  }, [M, car])
+  useEffect(() => () => Object.values(windowMats).forEach((m) => m.dispose()), [windowMats])
+
+  // Separate tail-guide materials so "sequential" can light each side alone
+  const tailMats = useMemo(() => ({ l: M.lights.tail, r: M.lights.tail.clone() }), [M])
+
+  const refs = useMemo(() => ({
+    door: Object.fromEntries(DOOR_KEYS.map((k) => [k, createRef()])),
+    win: Object.fromEntries(DOOR_KEYS.map((k) => [k, createRef()])),
+    mirror: { l: createRef(), r: createRef() },
+    mirrorGlass: { l: createRef(), r: createRef() },
+    wiper: { a: createRef(), b: createRef(), rear: createRef() },
+    hood: createRef(),
+    boot: createRef(),
+    sun: createRef(),
+    spotL: createRef(),
+    spotR: createRef(),
+  }), [])
+
+  const anim = useRef({
+    door: { fl: 0, fr: 0, rl: 0, rr: 0 },
+    win: { fl: 0, fr: 0, rl: 0, rr: 0 },
+    mirror: { l: 0, r: 0 },
+    glass: { lx: 0, ly: 0, rx: 0, ry: 0 },
+    hood: 0, boot: 0, tilt: 0, slide: 0, lift: 0,
+    wipe: { a: 0, rear: 0 }, phase: 0, rearPhase: 0,
+    drl: 0.04, led: 0, spot: 0, fog: 0, rearFog: 0, tailL: 0.25, tailR: 0.25, refl: 0.05,
+  })
+
+  const spotTargets = useMemo(() => {
+    const l = new THREE.Object3D()
+    const r = new THREE.Object3D()
+    l.position.set(0.7, 0, 9)
+    r.position.set(-0.7, 0, 9)
+    return { l, r }
+  }, [])
+
+  useFrame((state, delta) => {
+    const dt = Math.min(delta, 1 / 20)
+    const s = useCarState.getState()
+    const A = s.animationStates
+    const a = anim.current
+
+    // Doors — hinge about vertical axis at the leading edge
+    for (const k of DOOR_KEYS) {
+      const left = k.endsWith('l')
+      easing.damp(a.door, k, A[`door_${k}`] ? (k[0] === 'f' ? 1.12 : 1.05) : 0, 0.34, dt)
+      const g = refs.door[k].current
+      if (g) g.rotation.y = left ? -a.door[k] : a.door[k]
+      easing.damp(a.win, k, (A[`window_${k}`] || 0) / 100, 0.4, dt)
+      const w = refs.win[k].current
+      if (w) w.position.y = -car.doors[k].glassDrop * a.win[k]
+    }
+
+    // Hood (rear hinge) / boot (front hinge)
+    easing.damp(a, 'hood', A.bonnet ? 0.92 : 0, 0.45, dt)
+    easing.damp(a, 'boot', A.boot ? 1.02 : 0, 0.45, dt)
+    if (refs.hood.current) refs.hood.current.rotation.x = -a.hood
+    if (refs.boot.current) refs.boot.current.rotation.x = a.boot
+
+    // Sunroof (inbuilt type): 1 = vent tilt (rear edge up); 2 = drop below the
+    // roof skin, then slide back between roof and headliner. It stays dropped
+    // until it is fully forward again so it never cuts through the roof.
+    const sliding = A.sunroof === 2 || a.slide > 0.015
+    easing.damp(a, 'tilt', A.sunroof === 1 ? 0.075 : 0, 0.3, dt)
+    easing.damp(a, 'lift', sliding ? -0.026 : 0, 0.12, dt)
+    easing.damp(a, 'slide', A.sunroof === 2 && a.lift < -0.02 ? 0.31 : 0, 0.55, dt) // rear edge stops at the roof's end
+    const sun = refs.sun.current
+    if (sun) {
+      // The roof drops ~9 cm toward the rear glass, so a straight slide would
+      // poke through it: ride the roof profile, pitching the panel to match.
+      const { z0, z1 } = CAR.sunroof
+      const yF = GH.yG(z1 - a.slide)
+      const yR = GH.yG(z0 - a.slide)
+      const pitch = Math.atan2((yR - yF) - (GH.yG(z0) - GH.yG(z1)), z1 - z0)
+      sun.rotation.x = a.tilt + pitch
+      sun.position.set(0, yF + a.lift, z1 - a.slide)
+    }
+
+    // Mirrors: fold rearward, glass tilt
+    easing.damp(a.mirror, 'l', A.mirror_left ? 1.25 : 0, 0.35, dt)
+    easing.damp(a.mirror, 'r', A.mirror_right ? 1.25 : 0, 0.35, dt)
+    if (refs.mirror.l.current) refs.mirror.l.current.rotation.y = a.mirror.l
+    if (refs.mirror.r.current) refs.mirror.r.current.rotation.y = a.mirror.r
+    const mt = s.mirrorTilt
+    easing.damp(a.glass, 'lx', mt.left.x * 0.26, 0.15, dt)
+    easing.damp(a.glass, 'ly', mt.left.y * 0.26, 0.15, dt)
+    easing.damp(a.glass, 'rx', mt.right.x * 0.26, 0.15, dt)
+    easing.damp(a.glass, 'ry', mt.right.y * 0.26, 0.15, dt)
+    if (refs.mirrorGlass.l.current) refs.mirrorGlass.l.current.rotation.set(a.glass.lx, a.glass.ly, 0)
+    if (refs.mirrorGlass.r.current) refs.mirrorGlass.r.current.rotation.set(a.glass.rx, a.glass.ry, 0)
+
+    // Wipers: smooth back-and-forth sweep, park when switched off
+    if (A.wiper_front_left || A.wiper_front_right) {
+      a.phase += dt * (FRONT_WIPER_RATES[s.wiperSpeed] ?? 1.9)
+      a.wipe.a = (1 - Math.cos(a.phase)) / 2
+    } else {
+      a.phase = 0
+      easing.damp(a.wipe, 'a', 0, 0.25, dt)
+    }
+    if (A.wiper_rear) {
+      a.rearPhase += dt * (REAR_WIPER_RATES[s.rearWiperSpeed] ?? 1.4)
+      a.wipe.rear = (1 - Math.cos(a.rearPhase)) / 2
+    } else {
+      a.rearPhase = 0
+      easing.damp(a.wipe, 'rear', 0, 0.25, dt)
+    }
+    if (refs.wiper.a.current) refs.wiper.a.current.rotation.z = a.wipe.a * 1.36
+    if (refs.wiper.b.current) refs.wiper.b.current.rotation.z = a.wipe.a * 1.5
+    if (refs.wiper.rear.current) refs.wiper.rear.current.rotation.z = a.wipe.rear * 1.6
+
+    // Lighting
+    const night = !s.isDayMode
+    const hl = s.headlightMode
+    easing.damp(a, 'drl', hl === 'off' ? 0.04 : night ? 9 : 7, 0.12, dt)
+    easing.damp(a, 'led', hl === 'high' ? 26 : hl === 'drl' ? (night ? 3 : 1.2) : 0, 0.12, dt)
+    easing.damp(a, 'spot', hl === 'high' ? 60 : hl === 'drl' && night ? 14 : 0, 0.15, dt)
+    M.lights.drl.emissiveIntensity = a.drl
+    M.lights.led.emissiveIntensity = a.led
+    if (refs.spotL.current) refs.spotL.current.intensity = a.spot
+    if (refs.spotR.current) refs.spotR.current.intensity = a.spot
+
+    const tailOn = A.taillight_l || A.taillight_r
+    const idle = night ? 1.4 : 0.3
+    let tl = idle
+    let tr = idle
+    if (tailOn) {
+      const t = state.clock.elapsedTime
+      if (s.brakeLightMode === 'pulse') {
+        tl = tr = 2 + 6 * (0.5 + 0.5 * Math.sin(t * Math.PI * 3))
+      } else if (s.brakeLightMode === 'sequential') {
+        const ph = (t % 0.9) / 0.9
+        tl = ph < 0.5 ? 1 + 7 * Math.min(1, ph * 2.4) : 8
+        tr = ph < 0.5 ? 1 : 1 + 7 * Math.min(1, (ph - 0.5) * 2.4)
+      } else {
+        tl = tr = 8
+      }
+    }
+    easing.damp(a, 'tailL', tl, 0.06, dt)
+    easing.damp(a, 'tailR', tr, 0.06, dt)
+    tailMats.l.emissiveIntensity = a.tailL
+    tailMats.r.emissiveIntensity = a.tailR
+    M.lights.tailOutline.emissiveIntensity = night ? 0.9 : 0.15
+
+    easing.damp(a, 'fog', A.foglight_l || A.foglight_r ? 7 : 0, 0.1, dt)
+    easing.damp(a, 'rearFog', A.foglight_rear ? 9 : 0, 0.1, dt)
+    M.lights.fog.emissiveIntensity = a.fog
+    M.lights.rearFog.emissiveIntensity = a.rearFog
+    M.lights.reflector.emissiveIntensity = night ? 0.35 : 0.04
+    M.lights.plateLamp.emissiveIntensity = night ? 1.5 : 0
+  })
+
+  // ── Interaction: click (not drag) on any named part → hotspot ────────────
+  const hovered = useRef(null)
+  const findPart = (o) => {
+    while (o && !EXTERIOR_MESH_TO_HOTSPOT[o.name]) o = o.parent
+    return o
+  }
+  const onClick = (e) => {
+    if (useCarState.getState().activeView !== 'exterior' || e.delta > 6) return
+    const part = findPart(e.object)
+    if (!part) return
+    e.stopPropagation()
+    const key = EXTERIOR_MESH_TO_HOTSPOT[part.name]
+    setActiveHotspot(key)
+    flyTo(key)
+  }
+  const onMove = (e) => {
+    if (useCarState.getState().activeView !== 'exterior') return
+    const part = findPart(e.object)
+    const name = part ? part.name : null
+    if (name !== hovered.current) {
+      hovered.current = name
+      document.body.style.cursor = name ? 'pointer' : 'auto'
+      useCarState.getState().setHoveredMesh(name)
+    }
+  }
+  const onOut = () => {
+    if (hovered.current) {
+      hovered.current = null
+      document.body.style.cursor = 'auto'
+      useCarState.getState().setHoveredMesh(null)
+    }
+  }
+
+  const shellMats = (names) => names.map((n) => ({ paint: M.paint, black: M.blackPlastic, cowl: M.cowl })[n])
+  const hoodMats = useMemo(() => [M.paint, M.panelInner, M.paint, M.paint, M.paint, M.paint], [M])
+  const wheelZ = [CAR.axleF, CAR.axleR]
+
+  return (
+    <group name="vehicle" onClick={onClick} onPointerMove={onMove} onPointerOut={onOut}>
+      <Bvh firstHitOnly>
+        {/* Body shell, split into named parts for hotspot picking */}
+        {Object.entries(car.shell).map(([part, { geometry, materials }]) => (
+          <mesh key={part} name={part} geometry={geometry} material={shellMats(materials)} castShadow receiveShadow />
+        ))}
+        <mesh geometry={car.ghPaint} material={M.paint} castShadow />
+        <mesh geometry={car.archBody} material={M.paint} />
+        <mesh geometry={car.roofMould} material={M.blackGloss} />
+        <mesh geometry={car.srFrame} material={M.underbody} />
+        <mesh geometry={car.windshield} material={M.glassFrit} renderOrder={3} />
+        <mesh geometry={car.rearGlass} material={M.glassFrit} renderOrder={3} />
+
+        {/* Doors */}
+        {DOOR_KEYS.map((k) => (
+          <Door
+            key={k}
+            k={k}
+            d={car.doors[k]}
+            doorRef={refs.door[k]}
+            windowRef={refs.win[k]}
+            windowMat={windowMats[k]}
+            mirrorRef={k === 'fl' ? refs.mirror.l : k === 'fr' ? refs.mirror.r : undefined}
+            mirrorGlassRef={k === 'fl' ? refs.mirrorGlass.l : k === 'fr' ? refs.mirrorGlass.r : undefined}
+            frame={k === 'fl' ? car.mirrors.l : car.mirrors.r}
+          />
+        ))}
+
+        {/* Hood */}
+        <group ref={refs.hood} name="bonnet" position={car.hood.hinge}>
+          <group position={car.hood.hinge.clone().negate()}>
+            <mesh geometry={car.hood.geometry} material={hoodMats} castShadow receiveShadow />
+          </group>
+        </group>
+
+        {/* Boot lid */}
+        <group ref={refs.boot} name="boot" position={car.boot.hinge}>
+          <group position={car.boot.hinge.clone().negate()}>
+            <mesh geometry={car.boot.geometry} material={hoodMats} castShadow receiveShadow />
+            <mesh geometry={car.spoiler} material={M.paint} castShadow />
+          </group>
+        </group>
+
+        {/* Sunroof glass panel */}
+        <group ref={refs.sun} name="roof" position={car.sunroof.hinge}>
+          <group position={car.sunroof.hinge.clone().negate()}>
+            <mesh geometry={car.sunroof.geometry} material={M.glassFrit} renderOrder={3} />
+          </group>
+        </group>
+
+        {/* Front fascia */}
+        <Headlight h={car.headlights.l} name="headlight_l" />
+        <Headlight h={car.headlights.r} name="headlight_r" />
+        {/* Gloss-black Matrix-Mesh grille + lower honeycomb intake */}
+        <mesh geometry={car.grille.housing} material={M.grilleBack} />
+        <mesh geometry={car.grille.walls} material={M.blackPlastic} />
+        <Honeycomb cells={car.grille.cells} material={M.blackGloss} />
+        <mesh geometry={car.grille.lowerHousing} material={M.grilleBack} />
+        <mesh geometry={car.grille.lowerWalls} material={M.blackPlastic} />
+        <Honeycomb cells={car.grille.lowerCells} material={M.blackGloss} />
+        {/* Connected "Blade-Eye" LED light bar across the nose */}
+        <mesh geometry={car.grille.barChannel} material={M.blackGloss} />
+        <mesh geometry={car.grille.bar} material={M.lights.drl} />
+        <Badge frame={car.grille.logo} ring={S.logoRing} badge={S.logoBadge} offset={0.01} />
+        <mesh geometry={S.radar} material={M.blackGloss} position={car.grille.radar.position} quaternion={faceQuat(car.grille.radar.normal)} />
+        <FogLamp f={car.fogs.l} name="foglight_l" />
+        <FogLamp f={car.fogs.r} name="foglight_r" />
+        <Plate frame={car.plates.front} material={M.plateFront} />
+
+        {/* Rear fascia */}
+        <Taillight t={car.taillights.l} name="taillight_l" guideMat={tailMats.l} />
+        <Taillight t={car.taillights.r} name="taillight_r" guideMat={tailMats.r} />
+        <mesh geometry={car.reflectors} material={M.lights.reflector} />
+        <mesh geometry={car.rearFog} material={M.lights.rearFog} name="foglight_rear" />
+        <Plate frame={car.plates.rear} material={M.plateRear} />
+        <Badge frame={car.rearBadge} ring={S.smallRing} badge={S.smallBadge} offset={0.008} />
+        <mesh position={car.cityBadge.position.clone().addScaledVector(car.cityBadge.normal, 0.003)} quaternion={faceQuat(car.cityBadge.normal)}>
+          <planeGeometry args={[0.15, 0.0375]} />
+          <meshStandardMaterial map={cityTexture()} alphaTest={0.4} transparent metalness={1} roughness={0.12} color="#e8ecf0" />
+        </mesh>
+
+        {/* Parking sensors */}
+        {car.sensors.map((f, i) => (
+          <mesh key={i} geometry={S.sensor} material={M.paint} position={f.position} quaternion={yQuat(f.normal)} />
+        ))}
+
+        {/* Shark-fin antenna */}
+        <mesh geometry={S.fin} material={M.blackGloss} position={car.fin.position} castShadow />
+
+        {/* ADAS camera module behind the windshield header */}
+        <group name="adas_camera" position={car.adas.position.clone().addScaledVector(car.adas.normal, -0.03)} quaternion={faceQuat(car.adas.normal)}>
+          <mesh material={M.blackPlastic}>
+            <boxGeometry args={[0.15, 0.07, 0.04]} />
+          </mesh>
+          <mesh material={M.blackGloss} position={[0, 0, 0.022]} rotation={[Math.PI / 2, 0, 0]}>
+            <cylinderGeometry args={[0.016, 0.016, 0.01, 24]} />
+          </mesh>
+          <mesh material={M.lights.adasLed} position={[0.05, 0, 0.021]}>
+            <sphereGeometry args={[0.004, 10, 8]} />
+          </mesh>
+        </group>
+
+        {/* Wipers */}
+        <WiperArm name="wiper_front_right" wiperRef={refs.wiper.a} pivot={car.wipers.a} normal={car.wipers.normal} length={0.5} blade={0.56} />
+        <WiperArm name="wiper_front_left" wiperRef={refs.wiper.b} pivot={car.wipers.b} normal={car.wipers.normal} length={0.42} blade={0.42} />
+        <WiperArm name="wiper_rear" wiperRef={refs.wiper.rear} pivot={car.wipers.rear} normal={car.wipers.rearNormal} length={0.3} blade={0.32} />
+
+        {/* Wheels */}
+        {wheelZ.map((z) => [1, -1].map((side) => (
+          <group key={`${z}-${side}`}>
+            <Wheel position={[side * CAR.wheelX, CAR.tireR, z]} side={side} style={selectedWheel} />
+            <WheelTub z={z} side={side} />
+          </group>
+        )))}
+      </Bvh>
+
+      <Cavities />
+
+      {/* Headlamp beams (no shadows — cheap) */}
+      <primitive object={spotTargets.l} />
+      <primitive object={spotTargets.r} />
+      <spotLight ref={refs.spotL} position={car.headlights.l.centre.position.toArray()} target={spotTargets.l}
+        color="#eaf2ff" intensity={0} angle={0.42} penumbra={0.7} distance={18} decay={1.6} />
+      <spotLight ref={refs.spotR} position={car.headlights.r.centre.position.toArray()} target={spotTargets.r}
+        color="#eaf2ff" intensity={0} angle={0.42} penumbra={0.7} distance={18} decay={1.6} />
+    </group>
+  )
 }

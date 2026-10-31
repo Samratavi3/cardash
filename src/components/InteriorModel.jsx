@@ -1,63 +1,46 @@
-import { useMemo, useEffect } from 'react'
-import { useThree } from '@react-three/fiber'
+import { useEffect, useMemo, useRef } from 'react'
+import { useFrame, useThree } from '@react-three/fiber'
+import { easing } from 'maath'
 import * as THREE from 'three'
 import { useCarState } from '../hooks/useCarState'
 import { flyTo } from '../hooks/useCameraRig'
 import { useSoundFX } from '../hooks/useSoundFX'
 import { INTERIOR_MESH_TO_HOTSPOT as MESH_TO_HOTSPOT } from '../constants/hotspots'
+import { getInteriorMaterials } from '../three/interiorMaterials'
+import { buildCabinShell } from '../three/buildCar'
+import { dashboardGeometry, seatGeometry, benchGeometry, steeringGeometry, ventGeometry, rbox, DASH_HALF_W } from '../three/interiorGeometry'
+import { makeClusterTexture, makeInfotainmentTexture, makeClimateTexture } from '../three/screens'
+import { hBadgeGeometry } from '../three/wheelGeometry'
 
-// Coordinate system: +X = right (passenger), +Y = up, +Z = front (dashboard)
-
-// ── Material palette ───────────────────────────────────────────────────────────
-const C = {
-  headliner:     '#6a6878',
-  soft_touch:    '#28263c',
-  armrest:       '#201e2e',
-  door_body:     '#1a1828',
-  dash_body:     '#111118',
-  seat_body:     '#1e1c2a',
-  rear_wall:     '#141220',
-  lower_trim:    '#0a0a14',
-  pillar:        '#0d0c18',
-  floor_base:    '#0e0c12',
-  carpet:        '#1a1620',
-  rear_mat:      '#130f1a',
-  wood:          '#3c2810',
-  chrome:        '#c8c8c8',
-  dark_chrome:   '#303038',
-  piano_black:   '#08080e',
-  switch_panel:  '#0c0c18',
-  seat_bolster:  '#15131e',
-  seat_cushion:  '#252130',
-  stitch:        '#5a50cc',
-  stitch_e:      '#2c28aa',
+// Cabin layout (real-scale metres). RHD: the driver sits on the −X side.
+export const CABIN = {
+  floorY: 0.3,
+  driverX: -0.37,
+  frontSeatZ: -0.2,
+  rearSeatZ: -0.86,
+  wheel: new THREE.Vector3(-0.37, 0.955, 0.37),
 }
 
-// ── InteriorMesh ──────────────────────────────────────────────────────────────
-function InteriorMesh({ name, children, position, rotation, scale }) {
-  const setActiveHotspot = useCarState(s => s.setActiveHotspot)
-  const setPanoramaMode  = useCarState(s => s.setPanoramaMode)
-  const activeView       = useCarState(s => s.activeView)
-  const { playUIOpen }   = useSoundFX()
-  const hotspotKey  = MESH_TO_HOTSPOT[name]
+// ── Click wrapper (interior view only) ──────────────────────────────────────
+function InteriorMesh({ name, children, ...props }) {
+  const setActiveHotspot = useCarState((s) => s.setActiveHotspot)
+  const setPanoramaMode = useCarState((s) => s.setPanoramaMode)
+  const activeView = useCarState((s) => s.activeView)
+  const { playUIOpen } = useSoundFX()
+  const hotspotKey = MESH_TO_HOTSPOT[name]
   const interactive = hotspotKey && activeView === 'interior'
-
-  function handleClick(e) {
-    if (!interactive) return
-    e.stopPropagation()
-    playUIOpen()
-    setPanoramaMode(false)
-    setActiveHotspot(hotspotKey)
-    flyTo(hotspotKey)
-  }
-
   return (
     <group
       name={name}
-      position={position}
-      rotation={rotation}
-      scale={scale}
-      onClick={interactive ? handleClick : undefined}
+      {...props}
+      onClick={interactive ? (e) => {
+        if (e.delta > 6) return
+        e.stopPropagation()
+        playUIOpen()
+        setPanoramaMode(false)
+        setActiveHotspot(hotspotKey)
+        flyTo(hotspotKey)
+      } : undefined}
       onPointerOver={interactive ? (e) => { e.stopPropagation(); document.body.style.cursor = 'pointer' } : undefined}
       onPointerOut={interactive ? (e) => { e.stopPropagation(); document.body.style.cursor = 'auto' } : undefined}
     >
@@ -66,735 +49,449 @@ function InteriorMesh({ name, children, position, rotation, scale }) {
   )
 }
 
-// ── AC Vent ───────────────────────────────────────────────────────────────────
-function AcVentGroup({ name, position }) {
+// ── Air vent ────────────────────────────────────────────────────────────────
+function Vent({ name, position, w = 0.11, h = 0.05, rotation }) {
+  const IM = getInteriorMaterials()
+  const g = useMemo(() => ventGeometry(w, h), [w, h])
   return (
-    <InteriorMesh name={name} position={position}>
-      <mesh>
-        <boxGeometry args={[0.10, 0.055, 0.11]} />
-        <meshStandardMaterial color={C.dash_body} metalness={0.45} roughness={0.5} />
-      </mesh>
-      {[-0.016, 0, 0.016].map((y, i) => (
-        <mesh key={i} position={[0, y, 0.01]}>
-          <boxGeometry args={[0.08, 0.008, 0.09]} />
-          <meshStandardMaterial color={C.dark_chrome} metalness={0.3} roughness={0.55} />
-        </mesh>
+    <InteriorMesh name={name} position={position} rotation={rotation}>
+      <mesh geometry={g.frame} material={IM.satin} />
+      <mesh geometry={g.recess} material={IM.vent} position={[0, 0, -0.006]} />
+      {Array.from({ length: g.count }, (_, i) => (
+        <mesh key={i} geometry={g.vane} material={IM.pianoBlack}
+          position={[0, -h / 2 + ((i + 0.5) * h) / g.count, -0.012]} rotation={[0.25, 0, 0]} />
       ))}
-      <mesh>
-        <boxGeometry args={[0.102, 0.057, 0.113]} />
-        <meshStandardMaterial color="#00aaff" emissive="#004488"
-          emissiveIntensity={0.35} transparent opacity={0.05} />
-      </mesh>
     </InteriorMesh>
   )
 }
 
-// ── Grab handle (ceiling-mounted) ─────────────────────────────────────────────
-function GrabHandle({ position }) {
+// Round eyeball-style side vent with horizontal vanes, facing −Z
+function RoundVent({ name, position }) {
+  const IM = getInteriorMaterials()
+  const g = useMemo(() => {
+    const ring = new THREE.TorusGeometry(0.04, 0.007, 12, 40)
+    const disc = new THREE.CircleGeometry(0.04, 32)
+    disc.rotateY(Math.PI)
+    return { ring, disc, vane: rbox(0.07, 0.004, 0.012, 0.0015, 2) }
+  }, [])
   return (
-    <group position={position}>
-      {/* Horizontal bar */}
-      <mesh>
-        <boxGeometry args={[0.095, 0.016, 0.018]} />
-        <meshStandardMaterial color={C.dark_chrome} metalness={0.55} roughness={0.32} />
-      </mesh>
-      {/* Mount bracket tabs */}
-      {[-0.042, 0.042].map((x, i) => (
-        <mesh key={i} position={[x, 0.028, 0]}>
-          <boxGeometry args={[0.014, 0.042, 0.018]} />
-          <meshStandardMaterial color={C.soft_touch} roughness={0.55} />
-        </mesh>
+    <InteriorMesh name={name} position={position}>
+      <mesh geometry={g.ring} material={IM.satin} />
+      <mesh geometry={g.disc} material={IM.vent} position={[0, 0, 0.004]} />
+      {[-0.018, 0, 0.018].map((y) => (
+        <mesh key={y} geometry={g.vane} material={IM.pianoBlack} position={[0, y, -0.002]} scale={[Math.sqrt(1 - (y / 0.04) ** 2), 1, 1]} rotation={[0.25, 0, 0]} />
       ))}
-    </group>
+    </InteriorMesh>
   )
 }
 
-// ── Seat ──────────────────────────────────────────────────────────────────────
-function Seat({ name, position, state }) {
-  // Live seat adjustment from the store (defaults match the store's initial values)
-  const { foreAft = 50, height = 50, recline = 20 } = state || {}
-  const pos = [
-    position[0],
-    position[1] + (height - 50) * 0.002,
-    position[2] - (foreAft - 50) * 0.005,
-  ]
-  // recline 0–100 → backrest −0.06…−0.46 rad (default 20 reproduces the original −0.14)
-  const backAngle = -0.14 - ((recline - 20) / 100) * 0.40
+// ── Front seat ──────────────────────────────────────────────────────────────
+// Store slider values → seat pose (shared by the seat and its hotspot pin)
+function seatPose({ foreAft = 50, height = 50, recline = 20 } = {}) {
+  return {
+    z: CABIN.frontSeatZ + (foreAft - 50) * 0.0036,
+    y: (height - 50) * 0.0012,
+    r: 0.18 + (recline / 100) * 0.42,
+  }
+}
+const BACK_PIVOT = { y: 0.04, z: -0.22 }
 
+/** World position of a seat's hotspot pin: the inboard shoulder of the
+ *  backrest (visible from the rear-bench view), following fore/aft, height
+ *  and recline. */
+const _pin = new THREE.Vector3()
+export function seatPinPosition(x, state) {
+  const p = seatPose(state)
+  const Y = 0.6
+  const Z = -0.02
+  const cy = Y * Math.cos(p.r) + Z * Math.sin(p.r)
+  const cz = -Y * Math.sin(p.r) + Z * Math.cos(p.r)
+  return _pin.set(x - Math.sign(x) * 0.15, CABIN.floorY + 0.2 + p.y + BACK_PIVOT.y + cy, p.z + BACK_PIVOT.z + cz)
+}
+
+function FrontSeat({ name, x, stateKey }) {
+  const IM = getInteriorMaterials()
+  const G = seatGeometry()
+  const group = useRef()
+  const back = useRef()
+  const cur = useRef({ y: 0, z: CABIN.frontSeatZ, r: 0.3 })
+  useFrame((_, dt) => {
+    const t = seatPose(useCarState.getState()[stateKey])
+    const c = cur.current
+    easing.damp(c, 'z', t.z, 0.25, dt)
+    easing.damp(c, 'y', t.y, 0.25, dt)
+    easing.damp(c, 'r', t.r, 0.25, dt)
+    if (group.current) group.current.position.set(x, CABIN.floorY + 0.2 + c.y, c.z)
+    if (back.current) back.current.rotation.x = -c.r
+  })
   return (
-    <InteriorMesh name={name} position={pos}>
-      {/* Base cushion */}
-      <mesh castShadow>
-        <boxGeometry args={[0.52, 0.10, 0.52]} />
-        <meshStandardMaterial color={C.seat_body} roughness={0.86} metalness={0} />
-      </mesh>
-      {/* Cushion top pad */}
-      <mesh position={[0, 0.056, 0]}>
-        <boxGeometry args={[0.46, 0.06, 0.46]} />
-        <meshStandardMaterial color={C.seat_cushion} roughness={0.90} metalness={0} />
-      </mesh>
-      {/* Base bolsters */}
-      <mesh position={[ 0.26, 0.02, 0]} castShadow>
-        <boxGeometry args={[0.04, 0.14, 0.44]} />
-        <meshStandardMaterial color={C.seat_bolster} roughness={0.86} />
-      </mesh>
-      <mesh position={[-0.26, 0.02, 0]} castShadow>
-        <boxGeometry args={[0.04, 0.14, 0.44]} />
-        <meshStandardMaterial color={C.seat_bolster} roughness={0.86} />
-      </mesh>
-      {/* Stitching — cushion */}
-      <mesh position={[0, 0.063, 0.06]}>
-        <boxGeometry args={[0.44, 0.003, 0.005]} />
-        <meshStandardMaterial color={C.stitch} emissive={C.stitch_e} emissiveIntensity={0.35} />
-      </mesh>
-
-      {/* BACKREST GROUP — pivots at the cushion rear so recline animates */}
-      <group position={[0, 0.06, -0.20]} rotation={[backAngle, 0, 0]}>
-        {/* Seat back */}
-        <mesh position={[0, 0.30, -0.03]} castShadow>
-          <boxGeometry args={[0.50, 0.70, 0.09]} />
-          <meshStandardMaterial color={C.seat_body} roughness={0.86} metalness={0} />
-        </mesh>
-        {/* Back bolsters */}
-        <mesh position={[ 0.23, 0.30, -0.03]}>
-          <boxGeometry args={[0.07, 0.52, 0.10]} />
-          <meshStandardMaterial color={C.seat_bolster} roughness={0.86} />
-        </mesh>
-        <mesh position={[-0.23, 0.30, -0.03]}>
-          <boxGeometry args={[0.07, 0.52, 0.10]} />
-          <meshStandardMaterial color={C.seat_bolster} roughness={0.86} />
-        </mesh>
-        {/* Headrest */}
-        <mesh position={[0, 0.70, -0.05]} castShadow>
-          <boxGeometry args={[0.30, 0.19, 0.11]} />
-          <meshStandardMaterial color={C.seat_body} roughness={0.86} />
-        </mesh>
-        {/* Headrest posts */}
-        {[-0.085, 0.085].map((x, i) => (
-          <mesh key={i} position={[x, 0.52, -0.03]}>
-            <cylinderGeometry args={[0.007, 0.007, 0.19, 6]} />
-            <meshStandardMaterial color={C.dark_chrome} metalness={0.8} roughness={0.2} />
-          </mesh>
+    <InteriorMesh name={name}>
+      <group ref={group} position={[x, CABIN.floorY + 0.2, CABIN.frontSeatZ]}>
+        {/* Base & rails */}
+        <mesh geometry={G.base} material={IM.hardPlastic} position={[0, -0.09, 0.0]} />
+        {[-0.16, 0.16].map((rx) => (
+          <mesh key={rx} geometry={G.rail} material={IM.satin} position={[rx, -0.17, 0.02]} />
         ))}
-        {/* Stitching — back */}
-        <mesh position={[0, 0.30, 0.017]}>
-          <boxGeometry args={[0.005, 0.60, 0.004]} />
-          <meshStandardMaterial color={C.stitch} emissive={C.stitch_e} emissiveIntensity={0.35} />
-        </mesh>
+        {/* Cushion */}
+        <group rotation={[-0.09, 0, 0]}>
+          <mesh geometry={G.cushion} material={IM.leatherDark} position={[0, 0, 0.02]} castShadow />
+          <mesh geometry={G.cushionInsert} material={IM.perforated} position={[0, 0.058, 0.03]} />
+          {[-1, 1].map((sd) => (
+            <mesh key={sd} geometry={G.cushionBolster} material={IM.leather} position={[sd * 0.2, 0.05, 0.02]} />
+          ))}
+        </group>
+        {/* Backrest pivots at the rear of the cushion */}
+        <group ref={back} position={[0, BACK_PIVOT.y, BACK_PIVOT.z]} rotation={[-0.3, 0, 0]}>
+          <mesh geometry={G.back} material={IM.leatherDark} position={[0, 0.33, -0.03]} castShadow />
+          <mesh geometry={G.backInsert} material={IM.perforated} position={[0, 0.31, 0.035]} />
+          {[-1, 1].map((sd) => (
+            <mesh key={sd} geometry={G.backBolster} material={IM.leather} position={[sd * 0.205, 0.3, 0.02]} rotation={[0, -sd * 0.28, 0]} />
+          ))}
+          <mesh geometry={G.shoulder} material={IM.leather} position={[0, 0.6, -0.02]} />
+          {[-0.08, 0.08].map((px) => (
+            <mesh key={px} geometry={G.post} material={IM.satin} position={[px, 0.68, -0.03]} />
+          ))}
+          <mesh geometry={G.headrest} material={IM.leather} position={[0, 0.76, -0.02]} castShadow />
+        </group>
       </group>
     </InteriorMesh>
   )
 }
 
-// ── Door panel (shared left/right via xSign) ──────────────────────────────────
-function DoorPanel({ xSign, ambientColor, ambientEI, glassM }) {
-  const x  = xSign * 0.83
-  const xi = xSign
+function RearBench() {
+  const IM = getInteriorMaterials()
+  const G = benchGeometry()
+  return (
+    <group position={[0, CABIN.floorY + 0.21, CABIN.rearSeatZ]}>
+      <group rotation={[-0.06, 0, 0]}>
+        <mesh geometry={G.cushion} material={IM.leatherDark} castShadow />
+        {[-0.4, 0, 0.4].map((x) => (
+          <mesh key={x} geometry={G.cushionInsert} material={IM.perforated} position={[x, 0.066, 0.01]} />
+        ))}
+      </group>
+      <group position={[0, 0.04, -0.24]} rotation={[-0.2, 0, 0]}>
+        <mesh geometry={G.back} material={IM.leatherDark} position={[0, 0.27, -0.04]} castShadow />
+        {[-0.4, 0, 0.4].map((x) => (
+          <mesh key={x} geometry={G.backInsert} material={IM.perforated} position={[x, 0.26, 0.03]} />
+        ))}
+        {[-0.4, 0, 0.4].map((x) => (
+          <mesh key={x} geometry={G.headrest} material={IM.leather} position={[x, 0.5, -0.04]} />
+        ))}
+      </group>
+    </group>
+  )
+}
+
+// ── Steering wheel + column ─────────────────────────────────────────────────
+function SteeringWheel() {
+  const IM = getInteriorMaterials()
+  const G = steeringGeometry()
+  const badge = useMemo(() => hBadgeGeometry(0.034), [])
+  const ref = useRef()
+  const cur = useRef({ tilt: 0, reach: 0 })
+  useFrame((_, dt) => {
+    const p = useCarState.getState().steeringPos
+    easing.damp(cur.current, 'tilt', (p.tilt - 50) * 0.0011, 0.2, dt)
+    easing.damp(cur.current, 'reach', (p.reach - 50) * 0.0011, 0.2, dt)
+    if (ref.current) ref.current.position.set(CABIN.wheel.x, CABIN.wheel.y + cur.current.tilt, CABIN.wheel.z - cur.current.reach)
+  })
+  return (
+    <InteriorMesh name="steering_wheel">
+      <group ref={ref} position={CABIN.wheel}>
+        <group rotation={[0.43, 0, 0]}>
+          <mesh geometry={G.rim} material={IM.leatherDark} castShadow />
+          <mesh geometry={G.hub} material={IM.softTouch} position={[0, -0.01, 0.02]} />
+          <mesh geometry={badge} material={IM.chrome} position={[0, -0.005, -0.009]} rotation={[0, Math.PI, 0]} />
+          {[-1, 1].map((sd) => (
+            <group key={sd}>
+              <mesh geometry={G.spoke} material={IM.softTouch} position={[sd * 0.12, -0.012, 0.018]} />
+              <mesh geometry={G.paddle} material={IM.hardPlastic} position={[sd * 0.17, 0.045, 0.045]} rotation={[0, 0, sd * 0.2]} />
+            </group>
+          ))}
+          <mesh geometry={G.lowerSpoke} material={IM.satin} position={[0, -0.11, 0.018]} />
+          <mesh geometry={G.column} material={IM.softTouch} />
+          {[-1, 1].map((sd) => (
+            <mesh key={sd} geometry={G.stalk} material={IM.hardPlastic} position={[sd * 0.1, -0.02, 0.12]} />
+          ))}
+        </group>
+      </group>
+    </InteriorMesh>
+  )
+}
+
+// ── Dashboard ───────────────────────────────────────────────────────────────
+function Dashboard({ day }) {
+  const IM = getInteriorMaterials()
+  const dash = useMemo(() => dashboardGeometry(), [])
+  const tex = useMemo(() => ({
+    cluster: makeClusterTexture(),
+    info: makeInfotainmentTexture(),
+    climate: makeClimateTexture(),
+  }), [])
+  const screenMat = useMemo(() => ({
+    cluster: new THREE.MeshStandardMaterial({ color: '#000', emissive: '#fff', emissiveMap: tex.cluster, emissiveIntensity: 1.25, roughness: 0.25, metalness: 0 }),
+    info: new THREE.MeshStandardMaterial({ color: '#000', emissive: '#fff', emissiveMap: tex.info, emissiveIntensity: 1.2, roughness: 0.18, metalness: 0 }),
+    climate: new THREE.MeshStandardMaterial({ color: '#000', emissive: '#fff', emissiveMap: tex.climate, emissiveIntensity: 1.1, roughness: 0.3 }),
+  }), [tex])
+  useEffect(() => () => {
+    Object.values(tex).forEach((t) => t.dispose())
+    Object.values(screenMat).forEach((m) => m.dispose())
+  }, [tex, screenMat])
+  useEffect(() => {
+    screenMat.cluster.emissiveIntensity = day ? 1.35 : 0.95
+    screenMat.info.emissiveIntensity = day ? 1.3 : 0.9
+  }, [day, screenMat])
+  const geo = useMemo(() => ({
+    // 10.1" floating touchscreen (2026)
+    screenBezel: rbox(0.258, 0.162, 0.022, 0.012),
+    screen: new THREE.PlaneGeometry(0.232, 0.136),
+    screenChin: rbox(0.12, 0.022, 0.03, 0.008),
+    ventBand: rbox(0.52, 0.088, 0.03, 0.016),
+    hazard: rbox(0.05, 0.02, 0.012, 0.006),
+    clusterHood: rbox(0.36, 0.05, 0.13, 0.024),
+    clusterBack: rbox(0.33, 0.13, 0.03, 0.012),
+    cluster: new THREE.PlaneGeometry(0.3, 0.1125),
+    climatePanel: rbox(0.32, 0.075, 0.02, 0.012),
+    climate: new THREE.PlaneGeometry(0.17, 0.026),
+    knob: new THREE.CylinderGeometry(0.019, 0.02, 0.02, 32),
+    trim: rbox(DASH_HALF_W * 2 - 0.06, 0.012, 0.012, 0.005),
+    glovebox: rbox(0.36, 0.008, 0.008, 0.003),
+  }), [])
   return (
     <group>
-      {/* Main body — Zone 3 */}
-      <mesh position={[x, 0.86, 0.22]} castShadow>
-        <boxGeometry args={[0.06, 1.36, 1.68]} />
-        <meshStandardMaterial color={C.door_body} roughness={0.65} metalness={0.12} />
+      <mesh geometry={dash.upper} material={IM.softTouch} castShadow receiveShadow />
+      <mesh geometry={dash.lower} material={IM.softBeige} receiveShadow />
+      {/* Satin trim line splitting the two tones */}
+      <mesh geometry={geo.trim} material={IM.satin} position={[0, 0.928, 0.592]} />
+      <mesh geometry={geo.glovebox} material={IM.hardPlastic} position={[0.38, 0.8, 0.607]} />
+
+      {/* Instrument cluster (driver side) */}
+      <InteriorMesh name="instrument_cluster" position={[CABIN.driverX, 1.022, 0.566]}>
+        <mesh geometry={geo.clusterHood} material={IM.softTouch} position={[0, 0.074, 0.01]} />
+        <mesh geometry={geo.clusterBack} material={IM.pianoBlack} position={[0, 0, 0.022]} rotation={[0.12, 0, 0]} />
+        <mesh geometry={geo.cluster} material={screenMat.cluster} position={[0, 0, 0.005]} rotation={[0.12, Math.PI, 0]} />
+      </InteriorMesh>
+
+      {/* Centre stack (2026): piano-black vent band with a horizontal vent each
+          side of the floating 10.1" touchscreen, hazard switch underneath */}
+      <mesh geometry={geo.ventBand} material={IM.pianoBlack} position={[0.04, 0.975, 0.574]} />
+      <Vent name="ac_vent_c" position={[-0.15, 0.975, 0.558]} w={0.092} h={0.05} />
+      <Vent name="ac_vent_c" position={[0.23, 0.975, 0.558]} w={0.092} h={0.05} />
+      <InteriorMesh name="screen_main" position={[0.04, 1.045, 0.545]}>
+        <mesh geometry={geo.screenChin} material={IM.pianoBlack} position={[0, -0.085, 0.012]} />
+        <group rotation={[0.12, 0, 0]}>
+          <mesh geometry={geo.screenBezel} material={IM.pianoBlack} />
+          <mesh geometry={geo.screen} material={screenMat.info} position={[0, 0.002, -0.0115]} rotation={[0, Math.PI, 0]} />
+        </group>
+      </InteriorMesh>
+      <mesh geometry={geo.hazard} material={IM.pianoBlack} position={[0.04, 0.912, 0.572]} />
+      <mesh position={[0.04, 0.912, 0.565]} rotation={[Math.PI / 2, 0, 0]}>
+        <cylinderGeometry args={[0.0065, 0.0065, 0.002, 3]} />
+        <meshStandardMaterial color="#d61f1f" emissive="#ff2a2a" emissiveIntensity={0.6} />
       </mesh>
-      {/* Upper shelf — Zone 2 */}
-      <mesh position={[x - xi * 0.002, 1.18, 0.22]}>
-        <boxGeometry args={[0.056, 0.44, 1.40]} />
-        <meshStandardMaterial color={C.soft_touch} roughness={0.42} metalness={0.08} />
-      </mesh>
-      {/* Walnut divider strip */}
-      <mesh position={[x - xi * 0.002, 0.962, 0.22]}>
-        <boxGeometry args={[0.056, 0.025, 1.45]} />
-        <meshStandardMaterial color={C.wood} roughness={0.50} metalness={0.06} />
-      </mesh>
-      {/* Chrome accent line */}
-      <mesh position={[xSign * 0.822, 0.90, 0.22]}>
-        <boxGeometry args={[0.008, 0.014, 1.52]} />
-        <meshStandardMaterial color={C.chrome} metalness={1} roughness={0.08} />
-      </mesh>
-      {/* Armrest */}
-      <mesh position={[xSign * 0.800, 0.77, 0.40]}>
-        <boxGeometry args={[0.08, 0.055, 0.44]} />
-        <meshStandardMaterial color={C.armrest} roughness={0.48} metalness={0.16} />
-      </mesh>
-      {/* Pull handle */}
-      <mesh position={[xSign * 0.798, 0.83, 0.56]}>
-        <boxGeometry args={[0.058, 0.038, 0.13]} />
-        <meshStandardMaterial color={C.dark_chrome} metalness={0.72} roughness={0.20} />
-      </mesh>
-      {/* Window switch panel */}
-      <mesh position={[xSign * 0.810, 0.705, 0.19]}>
-        <boxGeometry args={[0.048, 0.038, 0.20]} />
-        <meshStandardMaterial color={C.switch_panel} roughness={0.40} metalness={0.42} />
-      </mesh>
-      {[0, 0.065].map((dz, i) => (
-        <mesh key={i} position={[xSign * 0.792, 0.705, 0.12 + dz]}>
-          <boxGeometry args={[0.018, 0.016, 0.036]} />
-          <meshStandardMaterial color={C.dark_chrome} metalness={0.55} roughness={0.40} />
-        </mesh>
-      ))}
-      {/* Speaker grille backing — lower front of door */}
-      <mesh position={[x - xi * 0.002, 0.56, 0.72]}>
-        <boxGeometry args={[0.046, 0.085, 0.22]} />
-        <meshStandardMaterial color={C.dark_chrome} metalness={0.55} roughness={0.40} />
-      </mesh>
-      {/* Grille louvres */}
-      {[0, 0.022, 0.044, 0.066].map((dy, i) => (
-        <mesh key={i} position={[x - xi * 0.001, 0.525 + dy, 0.72]}>
-          <boxGeometry args={[0.044, 0.008, 0.18]} />
-          <meshStandardMaterial color={C.piano_black} roughness={0.60} />
-        </mesh>
-      ))}
-      {/* Ambient strip */}
-      <InteriorMesh name="ambient_strip" position={[xSign * 0.802, 0.625, 0.22]}>
-        <mesh>
-          <boxGeometry args={[0.016, 0.020, 1.12]} />
-          <meshStandardMaterial color={ambientColor} emissive={ambientColor}
-            emissiveIntensity={ambientEI} toneMapped={false} />
+      {/* Round side vents at the dash ends */}
+      <RoundVent name="ac_vent_l" position={[-0.665, 0.955, 0.585]} />
+      <RoundVent name="ac_vent_r" position={[0.665, 0.955, 0.585]} />
+
+      {/* Climate panel: three knobs around a digital strip */}
+      <group position={[0.04, 0.84, 0.574]} rotation={[-0.12, 0, 0]}>
+        <mesh geometry={geo.climatePanel} material={IM.pianoBlack} />
+        <mesh geometry={geo.climate} material={screenMat.climate} position={[0, 0.018, -0.0105]} rotation={[0, Math.PI, 0]} />
+        {[-0.11, 0, 0.11].map((kx) => (
+          <mesh key={kx} geometry={geo.knob} material={IM.satin} position={[kx, -0.012, -0.016]} rotation={[Math.PI / 2, 0, 0]} />
+        ))}
+      </group>
+
+      {/* Dash ambient underline (passenger side) — clickable ambient hotspot */}
+      <InteriorMesh name="ambient_strip">
+        <mesh material={IM.ambient} position={[0.47, 0.925, 0.598]}>
+          <boxGeometry args={[0.34, 0.005, 0.005]} />
         </mesh>
       </InteriorMesh>
-      {/* Window glass */}
-      <mesh position={[xSign * 0.832, 1.23, 0.30]}>
-        <boxGeometry args={[0.016, 0.50, 0.90]} />
-        <primitive object={glassM} attach="material" />
+    </group>
+  )
+}
+
+// ── Centre console ──────────────────────────────────────────────────────────
+function Console() {
+  const IM = getInteriorMaterials()
+  const g = useMemo(() => ({
+    stack: rbox(0.24, 0.3, 0.2, 0.03),
+    tunnel: rbox(0.24, 0.2, 0.86, 0.04),
+    top: rbox(0.2, 0.012, 0.55, 0.005),
+    boot: new THREE.CylinderGeometry(0.025, 0.05, 0.05, 24),
+    lever: new THREE.CylinderGeometry(0.012, 0.014, 0.1, 12),
+    knob: rbox(0.05, 0.075, 0.07, 0.022),
+    cup: new THREE.CylinderGeometry(0.038, 0.034, 0.02, 32),
+    arm: rbox(0.2, 0.08, 0.32, 0.035),
+    pad: rbox(0.12, 0.004, 0.16, 0.002),
+    epb: rbox(0.03, 0.012, 0.04, 0.005),
+  }), [])
+  const y = CABIN.floorY
+  return (
+    <group>
+      <mesh geometry={g.stack} material={IM.softBeige} position={[0, y + 0.29, 0.6]} />
+      <mesh geometry={g.tunnel} material={IM.softTouch} position={[0, y + 0.1, 0.12]} castShadow />
+      <mesh geometry={g.top} material={IM.pianoBlack} position={[0, y + 0.205, 0.18]} />
+      {/* CVT shifter */}
+      <mesh geometry={g.boot} material={IM.leatherDark} position={[0, y + 0.235, 0.33]} />
+      <mesh geometry={g.lever} material={IM.satin} position={[0, y + 0.3, 0.33]} />
+      <mesh geometry={g.knob} material={IM.leatherDark} position={[0, y + 0.37, 0.335]} rotation={[0.25, 0, 0]} />
+      {/* Wireless charger pad + cup holders + EPB */}
+      <mesh geometry={g.pad} material={IM.rubber} position={[0, y + 0.213, 0.5]} />
+      {[-0.045, 0.045].map((cx) => (
+        <mesh key={cx} geometry={g.cup} material={IM.vent} position={[cx, y + 0.206, 0.12]} />
+      ))}
+      <mesh geometry={g.epb} material={IM.satin} position={[-0.06, y + 0.215, 0.24]} />
+      <mesh geometry={g.arm} material={IM.leatherDark} position={[0, y + 0.25, -0.2]} />
+      <mesh material={IM.ambient} position={[0, y + 0.012, 0.15]}>
+        <boxGeometry args={[0.245, 0.004, 0.8]} />
       </mesh>
     </group>
   )
 }
 
-// ── InteriorModel ─────────────────────────────────────────────────────────────
-export default function InteriorModel() {
-  const { gl }            = useThree()
-  const isDayMode         = useCarState(s => s.isDayMode)
-  const ambientColor      = useCarState(s => s.ambientColor)
-  const ambientBrightness = useCarState(s => s.ambientBrightness)
-  const seatDriver        = useCarState(s => s.seatDriver)
-  const seatPassenger     = useCarState(s => s.seatPassenger)
-  const steeringPos       = useCarState(s => s.steeringPos)
-
-  const glassM = useMemo(() => new THREE.MeshPhysicalMaterial({
-    color: '#8ab0c8', metalness: 0, roughness: 0.04,
-    transmission: 0.88, thickness: 0.4, ior: 1.5,
-    envMapIntensity: 2.0, transparent: true, opacity: 0.18,
-    side: THREE.DoubleSide,
+// ── Roof hardware: mirror, visors, overhead console ─────────────────────────
+function RoofHardware({ day }) {
+  const IM = getInteriorMaterials()
+  const lamp = useMemo(() => new THREE.MeshStandardMaterial({ color: '#fff7e6', emissive: '#ffe9c2', emissiveIntensity: 0, roughness: 0.4 }), [])
+  useEffect(() => { lamp.emissiveIntensity = day ? 0 : 1.6 }, [day, lamp])
+  useEffect(() => () => lamp.dispose(), [lamp])
+  const g = useMemo(() => ({
+    mirror: rbox(0.25, 0.068, 0.035, 0.03),
+    mirrorGlass: rbox(0.235, 0.055, 0.004, 0.024),
+    stem: new THREE.CylinderGeometry(0.008, 0.01, 0.07, 10),
+    visor: rbox(0.36, 0.16, 0.022, 0.02),
+    console: rbox(0.28, 0.035, 0.16, 0.015),
+    lens: rbox(0.06, 0.006, 0.04, 0.0025),
+    button: rbox(0.04, 0.006, 0.022, 0.002),
+    handle: rbox(0.18, 0.025, 0.03, 0.012),
   }), [])
-  useEffect(() => () => glassM.dispose(), [glassM])
-
-  useEffect(() => {
-    const canvas = gl.domElement
-    const resetCursor = () => { document.body.style.cursor = 'auto' }
-    canvas.addEventListener('pointerleave', resetCursor)
-    return () => canvas.removeEventListener('pointerleave', resetCursor)
-  }, [gl])
-
-  const ambientEI = (isDayMode ? 0.45 : 1.6) * (ambientBrightness / 100)
-
-  // Transform aligns the interior to the exterior shell in world space:
-  //   Y: scale 0.682 + offset 0.587 → floor at y≈0.70, headliner at y≈1.62
-  //   Z: scale 0.583 + offset -0.404 → dash at z≈0.54, windshield at z≈0.675, rear wall at z≈-0.88
   return (
-    <group scale={[1, 0.682, 0.583]} position={[0, 0.587, -0.404]}>
+    <group>
+      <group position={[0, 1.315, 0.22]}>
+        <mesh geometry={g.stem} material={IM.hardPlastic} position={[0, 0.05, 0.03]} rotation={[0.5, 0, 0]} />
+        <mesh geometry={g.mirror} material={IM.hardPlastic} />
+        <mesh geometry={g.mirrorGlass} material={IM.mirror} position={[0, 0, -0.017]} />
+      </group>
+      {[-0.36, 0.36].map((x) => (
+        <mesh key={x} geometry={g.visor} material={IM.headliner} position={[x, 1.39, 0.06]} rotation={[1.35, 0, 0]} />
+      ))}
+      <InteriorMesh name="overhead_console" position={[0, 1.41, -0.02]}>
+        <mesh geometry={g.console} material={IM.softBeige} />
+        {[-0.08, 0.08].map((x) => (
+          <mesh key={x} geometry={g.lens} material={lamp} position={[x, -0.018, 0.01]} />
+        ))}
+        <mesh geometry={g.button} material={IM.pianoBlack} position={[0, -0.018, -0.05]} />
+      </InteriorMesh>
+      {[[0.66, 1.33, 0.0], [0.66, 1.3, -0.82], [-0.66, 1.3, -0.82]].map(([x, y, z], i) => (
+        <mesh key={i} geometry={g.handle} material={IM.softBeige} position={[x, y, z]} rotation={[0, Math.PI / 2, Math.sign(x) * 0.5]} />
+      ))}
+    </group>
+  )
+}
 
-      {/* ── FLOOR ─────────────────────────────────────────────────────────── */}
-      <mesh position={[0, 0.16, 0.40]} receiveShadow>
-        <boxGeometry args={[1.68, 0.04, 2.52]} />
-        <meshStandardMaterial color={C.floor_base} roughness={0.90} metalness={0} />
+// ── Floor, firewall, bulkhead, pedals, B-pillars ────────────────────────────
+function Structure() {
+  const IM = getInteriorMaterials()
+  const y = CABIN.floorY
+  return (
+    <group>
+      <mesh material={IM.carpet} position={[0, y - 0.03, -0.15]} receiveShadow>
+        <boxGeometry args={[1.56, 0.06, 2.3]} />
       </mesh>
-      <mesh position={[0, 0.185, 0.40]}>
-        <boxGeometry args={[1.62, 0.01, 2.46]} />
-        <meshStandardMaterial color={C.carpet} roughness={1.0} metalness={0} />
+      {/* Toe board / firewall */}
+      <mesh material={IM.carpet} position={[0, y + 0.17, 0.97]} rotation={[-0.62, 0, 0]}>
+        <boxGeometry args={[1.5, 0.5, 0.03]} />
       </mesh>
-      <mesh position={[0, 0.187, -0.20]}>
-        <boxGeometry args={[1.28, 0.005, 0.52]} />
-        <meshStandardMaterial color={C.rear_mat} roughness={1.0} metalness={0} />
+      {/* Floor mats */}
+      {[[-0.37, 0.52], [0.37, 0.52], [-0.37, -0.52], [0.37, -0.52]].map(([x, z], i) => (
+        <mesh key={i} material={IM.rubber} position={[x, y + 0.004, z]} receiveShadow>
+          <boxGeometry args={[0.46, 0.006, i < 2 ? 0.55 : 0.4]} />
+        </mesh>
+      ))}
+      {/* Rear bulkhead + parcel shelf */}
+      <mesh material={IM.softTouch} position={[0, 0.65, -1.26]}>
+        <boxGeometry args={[1.5, 0.7, 0.04]} />
       </mesh>
-
-      {/* ── HEADLINER — Zone 1 ────────────────────────────────────────────── */}
-      <mesh position={[0, 1.52, 0.40]}>
-        <boxGeometry args={[1.68, 0.04, 2.62]} />
-        <meshStandardMaterial color={C.headliner} roughness={0.88} metalness={0} />
+      <mesh material={IM.softTouch} position={[0, 1.02, -1.36]}>
+        <boxGeometry args={[1.5, 0.025, 0.24]} />
       </mesh>
-      <mesh position={[0, 1.504, 0.40]}>
-        <boxGeometry args={[0.055, 0.012, 2.42]} />
-        <meshStandardMaterial color={C.soft_touch} roughness={0.55} metalness={0.25} />
-      </mesh>
-
-      {/* ── GRAB HANDLES ──────────────────────────────────────────────────── */}
-      <GrabHandle position={[-0.72, 1.468, 0.85]} />
-      <GrabHandle position={[ 0.72, 1.468, 0.85]} />
-      <GrabHandle position={[-0.72, 1.468, -0.20]} />
-      <GrabHandle position={[ 0.72, 1.468, -0.20]} />
-
-      {/* ── SUN VISORS ────────────────────────────────────────────────────── */}
-      <mesh position={[-0.52, 1.488, 1.63]} rotation={[0.20, 0, 0]}>
-        <boxGeometry args={[0.42, 0.012, 0.24]} />
-        <meshStandardMaterial color={C.soft_touch} roughness={0.55} metalness={0.08} />
-      </mesh>
-      <mesh position={[ 0.52, 1.488, 1.63]} rotation={[0.20, 0, 0]}>
-        <boxGeometry args={[0.42, 0.012, 0.24]} />
-        <meshStandardMaterial color={C.soft_touch} roughness={0.55} metalness={0.08} />
-      </mesh>
-
-      {/* ── REAR WALL ─────────────────────────────────────────────────────── */}
-      <mesh position={[0, 0.86, -0.82]} castShadow>
-        <boxGeometry args={[1.68, 1.36, 0.06]} />
-        <meshStandardMaterial color={C.rear_wall} roughness={0.80} metalness={0.06} />
-      </mesh>
-      <mesh position={[0, 1.11, -0.70]}>
-        <boxGeometry args={[1.56, 0.03, 0.24]} />
-        <meshStandardMaterial color={C.soft_touch} roughness={0.50} metalness={0.10} />
-      </mesh>
-
-      {/* ── REAR WINDOW GLASS ─────────────────────────────────────────────── */}
-      <mesh position={[0, 1.12, -0.77]} rotation={[-0.40, 0, 0]}>
-        <boxGeometry args={[1.45, 0.44, 0.016]} />
-        <primitive object={glassM} attach="material" />
-      </mesh>
-
-      {/* ── DOOR PANELS ───────────────────────────────────────────────────── */}
-      <DoorPanel xSign={-1} ambientColor={ambientColor} ambientEI={ambientEI} glassM={glassM} />
-      <DoorPanel xSign={+1} ambientColor={ambientColor} ambientEI={ambientEI} glassM={glassM} />
-
-      {/* ── B-PILLARS ─────────────────────────────────────────────────────── */}
-      <mesh position={[-0.825, 0.86, -0.08]}>
-        <boxGeometry args={[0.055, 1.36, 0.10]} />
-        <meshStandardMaterial color={C.pillar} roughness={0.70} metalness={0.15} />
-      </mesh>
-      <mesh position={[0.825, 0.86, -0.08]}>
-        <boxGeometry args={[0.055, 1.36, 0.10]} />
-        <meshStandardMaterial color={C.pillar} roughness={0.70} metalness={0.15} />
-      </mesh>
-
-      {/* ── SEAT BELT ANCHORS at B-pillar bases ───────────────────────────── */}
-      {[[-0.822, 0.42, -0.05], [0.822, 0.42, -0.05]].map(([bx, by, bz], i) => (
-        <group key={i} position={[bx, by, bz]}>
-          <mesh>
-            <boxGeometry args={[0.018, 0.055, 0.022]} />
-            <meshStandardMaterial color={C.chrome} metalness={1} roughness={0.06} />
+      {/* Rear wheel-house covers */}
+      {[-1, 1].map((sd) => (
+        <mesh key={sd} material={IM.softTouch} position={[sd * 0.7, 0.48, -1.12]}>
+          <boxGeometry args={[0.16, 0.36, 0.3]} />
+        </mesh>
+      ))}
+      {/* B-pillar trims (leaning with the tumblehome) */}
+      {[-1, 1].map((sd) => (
+        <group key={sd}>
+          <mesh material={IM.softTouch} position={[sd * 0.775, 0.62, -0.235]}>
+            <boxGeometry args={[0.05, 0.62, 0.1]} />
           </mesh>
-          <mesh position={[0, -0.036, 0]}>
-            <boxGeometry args={[0.010, 0.010, 0.016]} />
-            <meshStandardMaterial color={C.dark_chrome} metalness={0.55} roughness={0.40} />
+          <mesh material={IM.pillarTrim} position={[sd * 0.7, 1.15, -0.235]} rotation={[0, 0, sd * 0.46]}>
+            <boxGeometry args={[0.04, 0.5, 0.1]} />
           </mesh>
         </group>
       ))}
-
-      {/* ── A-PILLARS ─────────────────────────────────────────────────────── */}
-      <mesh position={[-0.81, 1.26, 1.52]} rotation={[0.38, 0, 0.10]}>
-        <boxGeometry args={[0.055, 0.64, 0.09]} />
-        <meshStandardMaterial color={C.pillar} roughness={0.70} metalness={0.10} />
+      {/* Pedals (driver side) */}
+      <mesh material={IM.satin} position={[CABIN.driverX + 0.07, y + 0.13, 0.84]} rotation={[-0.75, 0, 0]}>
+        <boxGeometry args={[0.07, 0.12, 0.012]} />
       </mesh>
-      <mesh position={[0.81, 1.26, 1.52]} rotation={[0.38, 0, -0.10]}>
-        <boxGeometry args={[0.055, 0.64, 0.09]} />
-        <meshStandardMaterial color={C.pillar} roughness={0.70} metalness={0.10} />
+      <mesh material={IM.rubber} position={[CABIN.driverX - 0.1, y + 0.14, 0.82]} rotation={[-0.6, 0, 0]}>
+        <boxGeometry args={[0.1, 0.07, 0.015]} />
       </mesh>
-
-      {/* ── DASHBOARD ─────────────────────────────────────────────────────── */}
-      <mesh position={[0, 1.10, 1.62]} castShadow receiveShadow>
-        <boxGeometry args={[1.65, 0.30, 0.40]} />
-        <meshStandardMaterial color={C.dash_body} roughness={0.60} metalness={0.22} />
-      </mesh>
-      <mesh position={[0, 1.24, 1.55]} rotation={[0.35, 0, 0]}>
-        <boxGeometry args={[1.62, 0.06, 0.30]} />
-        <meshStandardMaterial color={C.soft_touch} roughness={0.42} metalness={0.06} />
-      </mesh>
-      <mesh position={[0, 0.89, 1.61]}>
-        <boxGeometry args={[1.65, 0.15, 0.08]} />
-        <meshStandardMaterial color={C.lower_trim} roughness={0.75} metalness={0.15} />
-      </mesh>
-      <mesh position={[0, 1.002, 1.638]}>
-        <boxGeometry args={[1.62, 0.026, 0.012]} />
-        <meshStandardMaterial color={C.wood} roughness={0.48} metalness={0.06} />
-      </mesh>
-      <mesh position={[0, 0.988, 1.638]}>
-        <boxGeometry args={[1.62, 0.008, 0.010]} />
-        <meshStandardMaterial color={C.chrome} metalness={1} roughness={0.08} />
-      </mesh>
-      {/* Ambient underline strip */}
-      <mesh position={[0.10, 0.99, 1.645]}>
-        <boxGeometry args={[0.88, 0.007, 0.007]} />
-        <meshStandardMaterial color={ambientColor} emissive={ambientColor}
-          emissiveIntensity={ambientEI * 0.65} toneMapped={false} />
-      </mesh>
-
-      {/* ── INSTRUMENT CLUSTER HOOD / COWL ────────────────────────────────── */}
-      <mesh position={[-0.365, 1.252, 1.572]} rotation={[-0.20, 0, 0]}>
-        <boxGeometry args={[0.47, 0.062, 0.19]} />
-        <meshStandardMaterial color={C.dash_body} roughness={0.55} metalness={0.22} />
-      </mesh>
-      <mesh position={[-0.365, 1.276, 1.558]}>
-        <boxGeometry args={[0.44, 0.014, 0.14]} />
-        <meshStandardMaterial color={C.soft_touch} roughness={0.42} metalness={0.08} />
-      </mesh>
-
-      {/* ── HVAC CONTROLS ─────────────────────────────────────────────────── */}
-      <mesh position={[0.10, 0.972, 1.645]}>
-        <boxGeometry args={[0.62, 0.052, 0.038]} />
-        <meshStandardMaterial color={C.switch_panel} roughness={0.40} metalness={0.50} />
-      </mesh>
-      {[-0.18, 0.38].map((hx, i) => (
-        <mesh key={i} position={[hx, 0.972, 1.662]}>
-          <cylinderGeometry args={[0.020, 0.020, 0.014, 12]} />
-          <meshStandardMaterial color={C.dark_chrome} metalness={0.62} roughness={0.30} />
-        </mesh>
-      ))}
-
-      {/* ── INSTRUMENT CLUSTER ────────────────────────────────────────────── */}
-      <InteriorMesh name="instrument_cluster" position={[-0.365, 1.17, 1.610]}>
-        {/* Bezel */}
-        <mesh>
-          <boxGeometry args={[0.44, 0.22, 0.04]} />
-          <meshStandardMaterial color={C.piano_black} roughness={0.30} metalness={0.65} />
-        </mesh>
-        {/* Display surface */}
-        <mesh position={[0, 0, 0.022]}>
-          <boxGeometry args={[0.40, 0.18, 0.01]} />
-          <meshStandardMaterial color="#001040" emissive="#0030a0"
-            emissiveIntensity={isDayMode ? 0.6 : 1.0} toneMapped={false} />
-        </mesh>
-        {/* ── Cluster screen content ── */}
-        {/* Speedometer arc — ~240° partial torus */}
-        <mesh position={[-0.06, -0.008, 0.030]} rotation={[0, 0, Math.PI * 0.85]}>
-          <torusGeometry args={[0.058, 0.004, 6, 36, Math.PI * 1.33]} />
-          <meshStandardMaterial color={ambientColor} emissive={ambientColor}
-            emissiveIntensity={1.4} toneMapped={false} />
-        </mesh>
-        {/* Speed needle */}
-        <mesh position={[-0.025, 0.012, 0.031]} rotation={[0, 0, -0.50]}>
-          <boxGeometry args={[0.052, 0.0024, 0.002]} />
-          <meshStandardMaterial color="#ff5050" emissive="#cc2020"
-            emissiveIntensity={1.2} toneMapped={false} />
-        </mesh>
-        {/* Center pivot dot */}
-        <mesh position={[-0.060, -0.008, 0.031]}>
-          <cylinderGeometry args={[0.006, 0.006, 0.003, 10]} />
-          <meshStandardMaterial color="#ccccdd" emissive="#666688" emissiveIntensity={0.5} />
-        </mesh>
-        {/* Digital readout patch */}
-        <mesh position={[-0.060, -0.008, 0.031]}>
-          <boxGeometry args={[0.040, 0.024, 0.001]} />
-          <meshStandardMaterial color="#001844" roughness={0.4} />
-        </mesh>
-        {/* Right info panel — power bars */}
-        <mesh position={[0.115, 0.00, 0.029]}>
-          <boxGeometry args={[0.11, 0.13, 0.001]} />
-          <meshStandardMaterial color="#020a1a" roughness={0.4} />
-        </mesh>
-        {[0.045, 0.020, -0.005, -0.030].map((py, i) => (
-          <mesh key={i} position={[0.110, py, 0.030]}>
-            <boxGeometry args={[0.055 + i * 0.008, 0.010, 0.001]} />
-            <meshStandardMaterial
-              color={i < 2 ? '#00cc44' : '#2244aa'}
-              emissive={i < 2 ? '#004422' : '#111a44'}
-              emissiveIntensity={0.8} toneMapped={false} />
-          </mesh>
-        ))}
-        {/* Anti-glare coat */}
-        <mesh position={[0, 0, 0.028]}>
-          <boxGeometry args={[0.40, 0.18, 0.002]} />
-          <meshStandardMaterial color="#ffffff" transparent opacity={0.03}
-            metalness={0.1} roughness={0} />
-        </mesh>
-      </InteriorMesh>
-
-      {/* ── INFOTAINMENT SCREEN ───────────────────────────────────────────── */}
-      <InteriorMesh name="screen_main" position={[0.10, 1.15, 1.630]}>
-        {/* Bezel */}
-        <mesh>
-          <boxGeometry args={[0.46, 0.30, 0.032]} />
-          <meshStandardMaterial color={C.piano_black} roughness={0.30} metalness={0.65} />
-        </mesh>
-        {/* Display surface */}
-        <mesh position={[0, 0, 0.018]}>
-          <boxGeometry args={[0.42, 0.26, 0.01]} />
-          <meshStandardMaterial color="#030818" emissive="#001060"
-            emissiveIntensity={isDayMode ? 0.8 : 1.3} toneMapped={false} />
-        </mesh>
-        {/* ── Infotainment screen content ── */}
-        {/* Map background */}
-        <mesh position={[0, 0.022, 0.021]}>
-          <boxGeometry args={[0.40, 0.195, 0.001]} />
-          <meshStandardMaterial color="#0a1830" roughness={0.4} />
-        </mesh>
-        {/* Road lanes */}
-        {[[-0.08, 0.130], [0.00, 0.165], [0.07, 0.125]].map(([rx, rlen], i) => (
-          <mesh key={i} position={[rx, 0.018, 0.022]} rotation={[0, 0, rx * 1.4]}>
-            <boxGeometry args={[0.007, rlen, 0.001]} />
-            <meshStandardMaterial color="#ccaa33" emissive="#886622"
-              emissiveIntensity={0.55} toneMapped={false} />
-          </mesh>
-        ))}
-        {/* Destination pin */}
-        <mesh position={[0.055, 0.055, 0.022]}>
-          <cylinderGeometry args={[0.007, 0.007, 0.014, 8]} />
-          <meshStandardMaterial color="#ff3030" emissive="#aa0000"
-            emissiveIntensity={0.8} toneMapped={false} />
-        </mesh>
-        {/* Bottom dock */}
-        <mesh position={[0, -0.109, 0.021]}>
-          <boxGeometry args={[0.40, 0.038, 0.001]} />
-          <meshStandardMaterial color="#030c1c" roughness={0.3} />
-        </mesh>
-        {/* Dock app icons */}
-        {[-0.12, -0.04, 0.04, 0.12].map((ix, i) => (
-          <mesh key={i} position={[ix, -0.109, 0.022]}>
-            <boxGeometry args={[0.028, 0.026, 0.001]} />
-            <meshStandardMaterial
-              color={['#0055cc', '#00aa33', '#cc3300', '#7722cc'][i]}
-              emissive={['#001166', '#004411', '#661100', '#330066'][i]}
-              emissiveIntensity={0.7} toneMapped={false} />
-          </mesh>
-        ))}
-        {/* Anti-glare coat */}
-        <mesh position={[0, 0, 0.024]}>
-          <boxGeometry args={[0.42, 0.26, 0.002]} />
-          <meshStandardMaterial color="#ffffff" transparent opacity={0.04}
-            metalness={0.1} roughness={0} />
-        </mesh>
-      </InteriorMesh>
-
-      {/* ── AC VENTS ──────────────────────────────────────────────────────── */}
-      <AcVentGroup name="ac_vent_l" position={[-0.365, 1.068, 1.640]} />
-      <AcVentGroup name="ac_vent_c" position={[ 0.100, 1.068, 1.640]} />
-      <AcVentGroup name="ac_vent_r" position={[ 0.440, 1.068, 1.640]} />
-
-      {/* ── STEERING WHEEL — tilt raises/lowers, reach pulls toward driver ── */}
-      <InteriorMesh
-        name="steering_wheel"
-        position={[
-          -0.37,
-          1.12 + (steeringPos.tilt - 50) * 0.002,
-          1.22 - (steeringPos.reach - 50) * 0.002,
-        ]}>
-        {/* Rim */}
-        <mesh rotation={[Math.PI / 2 - 0.28, 0, 0]}>
-          <torusGeometry args={[0.185, 0.023, 10, 40]} />
-          <meshStandardMaterial color="#1a1824" roughness={0.55} metalness={0.18} />
-        </mesh>
-        {/* Spokes */}
-        {[-0.072, 0.072].map((sx, i) => (
-          <mesh key={i} position={[sx, -0.01, 0]} rotation={[Math.PI / 2 - 0.28, 0, 0]}>
-            <boxGeometry args={[0.022, 0.155, 0.025]} />
-            <meshStandardMaterial color={C.pillar} roughness={0.45} metalness={0.30} />
-          </mesh>
-        ))}
-        {/* Center hub */}
-        <mesh rotation={[Math.PI / 2 - 0.28, 0, 0]}>
-          <cylinderGeometry args={[0.056, 0.056, 0.022, 16]} />
-          <meshStandardMaterial color={C.piano_black} roughness={0.35} metalness={0.65} />
-        </mesh>
-        {/* H badge */}
-        <mesh rotation={[Math.PI / 2 - 0.28, 0, 0]} position={[0, 0, 0.013]}>
-          <boxGeometry args={[0.034, 0.026, 0.005]} />
-          <meshStandardMaterial color={C.chrome} metalness={1} roughness={0.08} />
-        </mesh>
-        {/* Paddle shifters */}
-        <mesh position={[-0.21, 0.01, 0.01]} rotation={[Math.PI / 2 - 0.28, 0, 0]}>
-          <boxGeometry args={[0.050, 0.080, 0.015]} />
-          <meshStandardMaterial color={C.soft_touch} metalness={0.35} roughness={0.45} />
-        </mesh>
-        <mesh position={[0.21, 0.01, 0.01]} rotation={[Math.PI / 2 - 0.28, 0, 0]}>
-          <boxGeometry args={[0.050, 0.080, 0.015]} />
-          <meshStandardMaterial color={C.soft_touch} metalness={0.35} roughness={0.45} />
-        </mesh>
-        {/* Column shroud — lower clamshell body */}
-        <mesh position={[0, -0.12, 0.14]} rotation={[0.28, 0, 0]}>
-          <cylinderGeometry args={[0.044, 0.048, 0.28, 14]} />
-          <meshStandardMaterial color={C.dash_body} roughness={0.55} metalness={0.22} />
-        </mesh>
-        {/* Upper shroud cap — soft-touch */}
-        <mesh position={[0, -0.045, 0.112]} rotation={[0.28, 0, 0]}>
-          <cylinderGeometry args={[0.046, 0.046, 0.10, 14]} />
-          <meshStandardMaterial color={C.soft_touch} roughness={0.42} metalness={0.08} />
-        </mesh>
-        {/* Stalks — wiper left, light right */}
-        {[-1, 1].map((ss, i) => (
-          <mesh key={i} position={[ss * 0.088, -0.10, 0.14]} rotation={[0.28, 0, 0]}>
-            <boxGeometry args={[0.078, 0.011, 0.012]} />
-            <meshStandardMaterial color={C.dark_chrome} metalness={0.60} roughness={0.30} />
-          </mesh>
-        ))}
-      </InteriorMesh>
-
-      {/* ── CENTER CONSOLE ────────────────────────────────────────────────── */}
-      <mesh position={[0, 0.58, 0.68]} castShadow>
-        <boxGeometry args={[0.30, 0.64, 0.96]} />
-        <meshStandardMaterial color={C.lower_trim} roughness={0.60} metalness={0.20} />
-      </mesh>
-      <mesh position={[0, 0.88, 0.165]}>
-        <boxGeometry args={[0.28, 0.025, 0.012]} />
-        <meshStandardMaterial color={C.wood} roughness={0.48} metalness={0.06} />
-      </mesh>
-      {/* Armrest lid */}
-      <mesh position={[0, 0.922, 0.42]}>
-        <boxGeometry args={[0.28, 0.050, 0.46]} />
-        <meshStandardMaterial color={C.armrest} roughness={0.48} metalness={0.10} />
-      </mesh>
-      <mesh position={[0, 0.948, 0.42]}>
-        <boxGeometry args={[0.004, 0.004, 0.40]} />
-        <meshStandardMaterial color={C.stitch} emissive={C.stitch_e} emissiveIntensity={0.35} />
-      </mesh>
-      {/* Gear stalk */}
-      <mesh position={[0, 0.924, 0.81]}>
-        <cylinderGeometry args={[0.022, 0.022, 0.13, 10]} />
-        <meshStandardMaterial color={C.dark_chrome} roughness={0.40} metalness={0.55} />
-      </mesh>
-      {/* Knob */}
-      <mesh position={[0, 0.993, 0.81]}>
-        <sphereGeometry args={[0.042, 14, 14]} />
-        <meshStandardMaterial color="#1c1a28" roughness={0.28} metalness={0.36} />
-      </mesh>
-      {/* Gear indicator */}
-      <mesh position={[0, 0.914, 0.91]}>
-        <boxGeometry args={[0.08, 0.018, 0.10]} />
-        <meshStandardMaterial color={C.switch_panel} roughness={0.30} metalness={0.50} />
-      </mesh>
-      {/* EPB button */}
-      <mesh position={[-0.065, 0.914, 0.77]}>
-        <boxGeometry args={[0.030, 0.015, 0.030]} />
-        <meshStandardMaterial color="#dd1a1a" emissive="#880000"
-          emissiveIntensity={0.45} toneMapped={false} />
-      </mesh>
-      {/* Wireless charger */}
-      <mesh position={[0, 0.896, 0.52]}>
-        <boxGeometry args={[0.22, 0.010, 0.28]} />
-        <meshStandardMaterial color={C.piano_black} roughness={0.40} metalness={0.55} />
-      </mesh>
-      <mesh position={[0, 0.902, 0.52]}>
-        <boxGeometry args={[0.20, 0.005, 0.26]} />
-        <meshStandardMaterial color="#00ff88" emissive="#004422"
-          emissiveIntensity={0.72} toneMapped={false} />
-      </mesh>
-      {/* USB-C ports */}
-      {[-0.042, 0.042].map((ux, i) => (
-        <mesh key={i} position={[ux, 0.896, 0.32]}>
-          <boxGeometry args={[0.020, 0.012, 0.015]} />
-          <meshStandardMaterial color={C.dark_chrome} metalness={0.70} roughness={0.30} />
-        </mesh>
-      ))}
-      {/* Console ambient underline */}
-      <mesh position={[0, 0.275, 0.68]}>
-        <boxGeometry args={[0.296, 0.007, 0.88]} />
-        <meshStandardMaterial color={ambientColor} emissive={ambientColor}
-          emissiveIntensity={ambientEI * 0.45} toneMapped={false} />
-      </mesh>
-
-      {/* ── FRONT SEATS — driven by per-seat store state ─────────────────── */}
-      <Seat name="seat_driver"    position={[-0.38, 0.30, 0.45]} state={seatDriver} />
-      <Seat name="seat_passenger" position={[ 0.38, 0.30, 0.45]} state={seatPassenger} />
-
-      {/* ── REAR SEATS ────────────────────────────────────────────────────── */}
-      <mesh position={[0, 0.34, -0.52]} castShadow>
-        <boxGeometry args={[1.30, 0.11, 0.50]} />
-        <meshStandardMaterial color={C.seat_body} roughness={0.86} />
-      </mesh>
-      <mesh position={[0, 0.396, -0.52]}>
-        <boxGeometry args={[1.22, 0.06, 0.44]} />
-        <meshStandardMaterial color={C.seat_cushion} roughness={0.90} />
-      </mesh>
-      <mesh position={[0, 0.72, -0.74]} rotation={[-0.12, 0, 0]} castShadow>
-        <boxGeometry args={[1.30, 0.65, 0.09]} />
-        <meshStandardMaterial color={C.seat_body} roughness={0.86} />
-      </mesh>
-      {/* Rear headrests */}
-      {[-0.40, 0, 0.40].map((rx, i) => (
-        <mesh key={i} position={[rx, 1.07, -0.74]} castShadow>
-          <boxGeometry args={[0.27, 0.18, 0.10]} />
-          <meshStandardMaterial color={C.seat_body} roughness={0.86} />
-        </mesh>
-      ))}
-
-      {/* ── REAR SEAT FOLD-DOWN CENTRE ARMREST ────────────────────────────── */}
-      <mesh position={[0, 0.61, -0.56]}>
-        <boxGeometry args={[0.24, 0.052, 0.30]} />
-        <meshStandardMaterial color={C.armrest} roughness={0.48} metalness={0.10} />
-      </mesh>
-      <mesh position={[0, 0.638, -0.56]}>
-        <boxGeometry args={[0.004, 0.004, 0.26]} />
-        <meshStandardMaterial color={C.stitch} emissive={C.stitch_e} emissiveIntensity={0.25} />
-      </mesh>
-
-      {/* ── DRIVER PEDALS ─────────────────────────────────────────────────── */}
-      {/* Brake pedal */}
-      <mesh position={[-0.47, 0.225, 1.26]}>
-        <boxGeometry args={[0.095, 0.012, 0.115]} />
-        <meshStandardMaterial color={C.dark_chrome} metalness={0.55} roughness={0.38} />
-      </mesh>
-      <mesh position={[-0.47, 0.220, 1.22]}>
-        <boxGeometry args={[0.075, 0.008, 0.058]} />
-        <meshStandardMaterial color="#181820" roughness={0.80} metalness={0.10} />
-      </mesh>
-      {/* Accelerator pedal */}
-      <mesh position={[-0.27, 0.222, 1.30]}>
-        <boxGeometry args={[0.070, 0.010, 0.150]} />
-        <meshStandardMaterial color={C.dark_chrome} metalness={0.55} roughness={0.38} />
-      </mesh>
-
-      {/* ── REARVIEW MIRROR ───────────────────────────────────────────────── */}
-      <mesh position={[0.04, 1.44, 1.49]}>
-        <boxGeometry args={[0.21, 0.072, 0.024]} />
-        <meshStandardMaterial color={C.soft_touch} roughness={0.50} metalness={0.30} />
-      </mesh>
-      <mesh position={[0.04, 1.44, 1.478]}>
-        <boxGeometry args={[0.185, 0.055, 0.005]} />
-        <meshStandardMaterial color="#aabbcc" metalness={0.92} roughness={0.02} />
-      </mesh>
-      <mesh position={[0.04, 1.498, 1.515]} rotation={[0.28, 0, 0]}>
-        <cylinderGeometry args={[0.007, 0.007, 0.11, 8]} />
-        <meshStandardMaterial color={C.dark_chrome} metalness={0.60} roughness={0.30} />
-      </mesh>
-
-      {/* ── OVERHEAD CONSOLE ──────────────────────────────────────────────── */}
-      <InteriorMesh name="overhead_console" position={[0, 1.500, 0.38]}>
-        <mesh>
-          <boxGeometry args={[0.44, 0.040, 0.28]} />
-          <meshStandardMaterial color={C.soft_touch} roughness={0.60} metalness={0.18} />
-        </mesh>
-        {[-0.13, 0.13].map((ox, i) => (
-          <mesh key={i} position={[ox, -0.025, 0.02]}>
-            <cylinderGeometry args={[0.022, 0.022, 0.012, 10]} />
-            <meshStandardMaterial color="#ffeecc" emissive="#aa8844"
-              emissiveIntensity={isDayMode ? 0.0 : 0.75} toneMapped={false} />
-          </mesh>
-        ))}
-        <mesh position={[0, -0.025, -0.06]}>
-          <boxGeometry args={[0.060, 0.012, 0.040]} />
-          <meshStandardMaterial color={C.switch_panel} metalness={0.50} roughness={0.40} />
-        </mesh>
-        <mesh position={[0.17, -0.025, -0.06]}>
-          <cylinderGeometry args={[0.015, 0.015, 0.012, 8]} />
-          <meshStandardMaterial color="#ff2020" emissive="#aa0000"
-            emissiveIntensity={0.55} toneMapped={false} />
-        </mesh>
-        <mesh position={[-0.17, -0.025, -0.06]}>
-          <cylinderGeometry args={[0.015, 0.015, 0.012, 8]} />
-          <meshStandardMaterial color={C.dark_chrome} metalness={0.50} roughness={0.40} />
-        </mesh>
-      </InteriorMesh>
-
-      {/* ── WINDSHIELD ────────────────────────────────────────────────────── */}
-      <mesh position={[0, 1.27, 1.85]}>
-        <boxGeometry args={[1.55, 0.54, 0.016]} />
-        <primitive object={glassM} attach="material" />
-      </mesh>
-
-      {/* ── LIGHTING ──────────────────────────────────────────────────────── */}
-      <pointLight color={ambientColor}
-        intensity={isDayMode ? 0.22 : 0.65}
-        position={[0, 0.30, 0.56]} distance={1.6} decay={2} />
-      <pointLight color={ambientColor}
-        intensity={isDayMode ? 0.08 : 0.32}
-        position={[-0.46, 0.27, 0.86]} distance={1.0} decay={2} />
-      <pointLight color={ambientColor}
-        intensity={isDayMode ? 0.08 : 0.32}
-        position={[0.46, 0.27, 0.86]} distance={1.0} decay={2} />
-      <pointLight color="#fff8f0"
-        intensity={isDayMode ? 0.0 : 0.50}
-        position={[0, 1.46, 0.38]} distance={2.2} decay={2} />
-      <pointLight color="#0040ff"
-        intensity={isDayMode ? 0.06 : 0.20}
-        position={[0.10, 1.15, 1.52]} distance={0.75} decay={2} />
     </group>
   )
 }
-// NOTE: seats + steering wheel here are the single source of truth (RHD) — VehicleModel no longer duplicates them
+
+// ── Interior ────────────────────────────────────────────────────────────────
+export default function InteriorModel() {
+  const { gl } = useThree()
+  const IM = getInteriorMaterials()
+  const shell = useMemo(() => buildCabinShell(), [])
+  const isDayMode = useCarState((s) => s.isDayMode)
+  const ambientColor = useCarState((s) => s.ambientColor)
+  const ambientBrightness = useCarState((s) => s.ambientBrightness)
+  const footRef = useRef()
+
+  // Ambient LED strips share one emissive material
+  useEffect(() => {
+    IM.ambient.emissive.set(ambientColor)
+    IM.ambient.emissiveIntensity = (ambientBrightness / 100) * (isDayMode ? 2.2 : 4.5)
+    if (footRef.current) {
+      footRef.current.color.set(ambientColor)
+      footRef.current.intensity = (ambientBrightness / 100) * (isDayMode ? 0.15 : 0.6)
+    }
+  }, [IM, ambientColor, ambientBrightness, isDayMode])
+
+  useEffect(() => {
+    const canvas = gl.domElement
+    const reset = () => { document.body.style.cursor = 'auto' }
+    canvas.addEventListener('pointerleave', reset)
+    return () => canvas.removeEventListener('pointerleave', reset)
+  }, [gl])
+
+  return (
+    <group name="interior">
+      <mesh geometry={shell.headliner} material={IM.headliner} />
+      <mesh geometry={shell.sideTrim} material={IM.softTouch} />
+      <Structure />
+      <Dashboard day={isDayMode} />
+      <Console />
+      <SteeringWheel />
+      <FrontSeat name="seat_driver" x={CABIN.driverX} stateKey="seatDriver" />
+      <FrontSeat name="seat_passenger" x={-CABIN.driverX} stateKey="seatPassenger" />
+      <RearBench />
+      <RoofHardware day={isDayMode} />
+      {/* Clickable ambient strip on the passenger side of the dash */}
+      <InteriorMesh name="ambient_strip" position={[0, 0.925, 0.598]}>
+        <mesh material={IM.ambient} position={[-0.42, 0, 0]}>
+          <boxGeometry args={[0.5, 0.005, 0.005]} />
+        </mesh>
+      </InteriorMesh>
+      <pointLight ref={footRef} position={[0, 0.42, 0.45]} distance={1.4} decay={2} intensity={0.2} color={ambientColor} />
+      <pointLight position={[0, 1.3, -0.3]} distance={2.2} decay={2} intensity={isDayMode ? 0.0 : 0.35} color="#ffe2b8" />
+    </group>
+  )
+}

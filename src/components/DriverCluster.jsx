@@ -243,7 +243,7 @@ export default function DriverCluster() {
         <div className="flex items-center justify-between">
           <div>
             <div className="text-[8px] text-white/25 tracking-widest uppercase">Honda City</div>
-            <div className="text-[10px] text-white/55 font-semibold leading-tight">ZX Turbo</div>
+            <div className="text-[10px] text-white/55 font-semibold leading-tight">ZX CVT</div>
           </div>
           <div className="text-right">
             <div className="text-sm font-mono font-bold text-white text-glow-white">{timeStr}</div>
@@ -289,7 +289,7 @@ export default function DriverCluster() {
       <div className="flex items-center justify-between">
         <div>
           <div className="text-[10px] text-white/30 tracking-widest uppercase font-medium">Honda City</div>
-          <div className="text-xs text-white/60 font-semibold">ZX·Turbo CVT</div>
+          <div className="text-xs text-white/60 font-semibold">New City ZX CVT</div>
         </div>
         <div className="text-right">
           <div className="text-lg font-mono font-bold text-white text-glow-white">{timeStr}</div>

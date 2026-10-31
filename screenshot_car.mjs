@@ -1,69 +1,42 @@
-import { chromium } from 'playwright';
+// Dev helper: renders the car from a set of angles to ss_view_*.png.
+// Usage:  npm run dev   (in another terminal)
+//         node screenshot_car.mjs [url]        default http://localhost:5173
+// Relies on the dev-only window.__cardash handles exposed in src/main.jsx.
+import { chromium } from 'playwright'
 
-const browser = await chromium.launch({ headless: true });
-const page = await browser.newPage();
-await page.setViewportSize({ width: 1400, height: 800 });
-await page.goto('http://localhost:5174');
-await page.waitForTimeout(2000);
-
-// Click "LAUNCH DASHBOARD"
+const url = process.argv[2] || 'http://localhost:5173'
+const browser = await chromium.launch({ headless: true, args: ['--enable-gpu', '--ignore-gpu-blocklist'] })
+const page = await browser.newPage()
+await page.setViewportSize({ width: 1600, height: 900 })
+await page.goto(url)
+await page.waitForTimeout(1500)
 try {
-  await page.click('text=LAUNCH DASHBOARD', { timeout: 4000 });
-} catch(e) { console.log('no launch btn'); }
+  await page.click('text=Launch Dashboard', { timeout: 4000 })
+} catch {
+  console.log('no launch button (size already chosen?)')
+}
+await page.waitForTimeout(6000)
 
-await page.waitForTimeout(2000);
+// Stop the turntable spin so each shot is framed exactly
+await page.evaluate(() => window.__cardash?.useCarState.getState().setAutoRotate(false))
+await page.screenshot({ path: 'ss_view_default.png' })
+console.log('default done')
 
-// Force intro complete via Zustand store
-await page.evaluate(async () => {
-  // Find the zustand store through React fiber
-  const root = document.querySelector('#root');
-  if (!root) return;
-  const key = Object.keys(root).find(k => k.startsWith('__reactContainer') || k.startsWith('__reactFiber'));
-  if (!key) return;
-  let fiber = root[key];
-  // walk up to find the store
-  const walk = (node, depth = 0) => {
-    if (depth > 200 || !node) return null;
-    if (node.memoizedState) {
-      let s = node.memoizedState;
-      while (s) {
-        if (s.queue && s.memoizedState && typeof s.memoizedState.setIntroComplete === 'function') {
-          s.memoizedState.setIntroComplete();
-          return true;
-        }
-        s = s.next;
-      }
-    }
-    return walk(node.child, depth+1) || walk(node.sibling, depth+1);
-  };
-  walk(fiber);
-});
-
-await page.waitForTimeout(3000);
-await page.screenshot({ path: 'ss_view_default.png' });
-console.log('default done');
-
-// Camera helper
-async function setCamera(px,py,pz, tx,ty,tz, label) {
-  await page.evaluate(async ([px,py,pz,tx,ty,tz]) => {
-    try {
-      const mod = await import('/src/hooks/useCameraRig.js');
-      const rig = mod.cameraRig;
-      if (rig?.controls?.setLookAt) await rig.controls.setLookAt(px,py,pz,tx,ty,tz,true);
-    } catch(e) {}
-  }, [px,py,pz,tx,ty,tz]);
-  await page.waitForTimeout(2000);
-  await page.screenshot({ path: `ss_view_${label}.png` });
-  console.log(label + ' done');
+async function shot(label, pos, target) {
+  await page.evaluate(([p, t]) => window.__cardash.cameraRig.controls.setLookAt(...p, ...t, false), [pos, target])
+  await page.waitForTimeout(1200)
+  await page.screenshot({ path: `ss_view_${label}.png` })
+  console.log(label + ' done')
 }
 
-await setCamera(0, 1.4, 6.5, 0, 0.9, 0, 'front');
-await setCamera(6.5, 1.4, 0, 0, 0.9, 0, 'side_left');
-await setCamera(-6.5, 1.4, 0, 0, 0.9, 0, 'side_right');
-await setCamera(0, 1.4, -6.5, 0, 0.9, 0, 'rear');
-await setCamera(0, 7.0, 0.1, 0, 0.9, 0, 'top');
-await setCamera(4.0, 2.5, 4.5, 0, 0.9, 0, 'front_quarter');
-await setCamera(-4.0, 2.5, -4.5, 0, 0.9, 0, 'rear_quarter');
+// Real-scale metres: +Z = nose, +X = car's left, ground at y = 0
+await shot('front', [0.3, 1.2, 7.4], [0, 0.7, 0])
+await shot('side_left', [7.6, 1.15, 0], [0, 0.72, 0])
+await shot('side_right', [-7.6, 1.15, 0], [0, 0.72, 0])
+await shot('rear', [0, 1.4, -7.4], [0, 0.8, 0])
+await shot('top', [0, 9, 0.1], [0, 0.6, 0])
+await shot('front_quarter', [4.8, 1.5, 5.4], [0, 0.7, 0.1])
+await shot('rear_quarter', [-4.8, 2.0, -5.6], [0, 0.7, 0])
 
-await browser.close();
-console.log('all done');
+await browser.close()
+console.log('all done')
