@@ -549,18 +549,30 @@ export default function VehicleModel() {
     while (o && !EXTERIOR_MESH_TO_HOTSPOT[o.name]) o = o.parent
     return o
   }
+  // The nearest surface decides, so a click on the glass never falls through
+  // to a part seen through it (the cabin isn't pickable from outside, so the
+  // far door's window was next in line). Glass only defers to a part mounted
+  // right behind it, like the ADAS camera.
+  const pick = (e) => {
+    e.stopPropagation()
+    if (e.object.userData.glass) {
+      const behind = e.intersections.find((h) => h.distance > e.distance && h.distance - e.distance < 0.08)
+      const part = behind && findPart(behind.object)
+      if (part) return part
+    }
+    return findPart(e.object)
+  }
   const onClick = (e) => {
     if (useCarState.getState().activeView !== 'exterior' || e.delta > 6) return
-    const part = findPart(e.object)
+    const part = pick(e)
     if (!part) return
-    e.stopPropagation()
     const key = EXTERIOR_MESH_TO_HOTSPOT[part.name]
     setActiveHotspot(key)
     flyTo(key)
   }
   const onMove = (e) => {
     if (useCarState.getState().activeView !== 'exterior') return
-    const part = findPart(e.object)
+    const part = pick(e)
     const name = part ? part.name : null
     if (name !== hovered.current) {
       hovered.current = name
@@ -591,8 +603,8 @@ export default function VehicleModel() {
         <mesh geometry={car.archBody} material={M.paint} />
         <mesh geometry={car.roofMould} material={M.blackGloss} />
         <mesh geometry={car.srFrame} material={M.underbody} />
-        <mesh geometry={car.windshield} material={M.glassFrit} renderOrder={3} />
-        <mesh geometry={car.rearGlass} material={M.glassFrit} renderOrder={3} />
+        <mesh name="windshield" geometry={car.windshield} material={M.glassFrit} renderOrder={3} userData={{ glass: true }} />
+        <mesh name="rear_glass" geometry={car.rearGlass} material={M.glassFrit} renderOrder={3} userData={{ glass: true }} />
 
         {/* Doors */}
         {DOOR_KEYS.map((k) => (
@@ -668,7 +680,9 @@ export default function VehicleModel() {
         ))}
 
         {/* Shark-fin antenna */}
-        <mesh geometry={S.fin} material={M.blackGloss} position={car.fin.position} castShadow />
+        {/* Stood on the roof normal: the roof falls ~5 cm over the fin's
+            length, so an upright fin floated at the tail and sank at the nose */}
+        <mesh geometry={S.fin} material={M.blackGloss} position={car.fin.position} quaternion={yQuat(car.fin.normal)} castShadow />
 
         {/* ADAS camera module behind the windshield header */}
         <group name="adas_camera" position={car.adas.position.clone().addScaledVector(car.adas.normal, -0.03)} quaternion={faceQuat(car.adas.normal)}>

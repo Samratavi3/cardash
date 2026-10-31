@@ -7,7 +7,9 @@ import { flyTo } from '../hooks/useCameraRig'
 import { useSoundFX } from '../hooks/useSoundFX'
 import { INTERIOR_MESH_TO_HOTSPOT as MESH_TO_HOTSPOT } from '../constants/hotspots'
 import { getInteriorMaterials } from '../three/interiorMaterials'
-import { buildCabinShell } from '../three/buildCar'
+import { buildCabinShell, GHD } from '../three/buildCar'
+import { greenhouse, kForX } from '../three/carSurface'
+import { frameAt } from '../three/surfaceMesh'
 import { dashboardGeometry, seatGeometry, benchGeometry, steeringGeometry, ventGeometry, rbox, DASH_HALF_W } from '../three/interiorGeometry'
 import { makeClusterTexture, makeInfotainmentTexture, makeClimateTexture } from '../three/screens'
 import { hBadgeGeometry } from '../three/wheelGeometry'
@@ -352,6 +354,19 @@ function Console() {
 }
 
 // ── Roof hardware: mirror, visors, overhead console ─────────────────────────
+/** Pose `inset` metres inside the greenhouse skin at (z, t) on one side:
+ *  +Y faces the skin, +Z runs forward along it. */
+function linerPose(z, t, side, inset) {
+  const f = frameAt(greenhouse, GHD, z, side > 0 ? t : 2 - t)
+  const y = f.normal
+  const fwd = f.tangent.addScaledVector(y, -f.tangent.dot(y)).normalize()
+  const x = new THREE.Vector3().crossVectors(y, fwd)
+  return {
+    position: f.position.addScaledVector(y, -inset),
+    quaternion: new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, y, fwd)),
+  }
+}
+
 function RoofHardware({ day }) {
   const IM = getInteriorMaterials()
   const lamp = useMemo(() => new THREE.MeshStandardMaterial({ color: '#fff7e6', emissive: '#ffe9c2', emissiveIntensity: 0, roughness: 0.4 }), [])
@@ -360,22 +375,40 @@ function RoofHardware({ day }) {
   const g = useMemo(() => ({
     mirror: rbox(0.25, 0.068, 0.035, 0.03),
     mirrorGlass: rbox(0.235, 0.055, 0.004, 0.024),
-    stem: new THREE.CylinderGeometry(0.008, 0.01, 0.07, 10),
-    visor: rbox(0.36, 0.16, 0.022, 0.02),
+    visor: rbox(0.34, 0.022, 0.15, 0.02),
     console: rbox(0.28, 0.035, 0.16, 0.015),
     lens: rbox(0.06, 0.006, 0.04, 0.0025),
     button: rbox(0.04, 0.006, 0.022, 0.002),
-    handle: rbox(0.18, 0.025, 0.03, 0.012),
+    handle: rbox(0.03, 0.025, 0.18, 0.012),
   }), [])
+  // Everything is posed off the real roof surface so nothing pokes through
+  // the skin: visors and grab handles sit just under the headliner (40 mm
+  // in), and the mirror stem runs from the mirror up to the windshield glass.
+  const poses = useMemo(() => {
+    const top = new THREE.Vector3(0, 1.345, 0.215)
+    const foot = linerPose(0.19, 1, 1, 0.012).position
+    const dir = foot.clone().sub(top)
+    const stem = new THREE.CylinderGeometry(0.008, 0.01, dir.length(), 10)
+    return {
+      stem: {
+        geometry: stem,
+        position: top.clone().lerp(foot, 0.5),
+        quaternion: new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize()),
+      },
+      visors: [1, -1].map((side) => linerPose(0.05, kForX(0.05, 0.35), side, 0.062)),
+      handles: [[1, 0.02], [1, -0.68], [-1, -0.68]].map(([side, z]) => linerPose(z, 0.45, side, 0.057)),
+    }
+  }, [])
+  useEffect(() => () => poses.stem.geometry.dispose(), [poses])
   return (
     <group>
+      <mesh geometry={poses.stem.geometry} material={IM.hardPlastic} position={poses.stem.position} quaternion={poses.stem.quaternion} />
       <group position={[0, 1.315, 0.22]}>
-        <mesh geometry={g.stem} material={IM.hardPlastic} position={[0, 0.05, 0.03]} rotation={[0.5, 0, 0]} />
         <mesh geometry={g.mirror} material={IM.hardPlastic} />
         <mesh geometry={g.mirrorGlass} material={IM.mirror} position={[0, 0, -0.017]} />
       </group>
-      {[-0.36, 0.36].map((x) => (
-        <mesh key={x} geometry={g.visor} material={IM.headliner} position={[x, 1.39, 0.06]} rotation={[1.35, 0, 0]} />
+      {poses.visors.map((p, i) => (
+        <mesh key={i} geometry={g.visor} material={IM.headliner} position={p.position} quaternion={p.quaternion} />
       ))}
       <InteriorMesh name="overhead_console" position={[0, 1.41, -0.02]}>
         <mesh geometry={g.console} material={IM.softBeige} />
@@ -384,8 +417,8 @@ function RoofHardware({ day }) {
         ))}
         <mesh geometry={g.button} material={IM.pianoBlack} position={[0, -0.018, -0.05]} />
       </InteriorMesh>
-      {[[0.66, 1.33, 0.0], [0.66, 1.3, -0.82], [-0.66, 1.3, -0.82]].map(([x, y, z], i) => (
-        <mesh key={i} geometry={g.handle} material={IM.softBeige} position={[x, y, z]} rotation={[0, Math.PI / 2, Math.sign(x) * 0.5]} />
+      {poses.handles.map((p, i) => (
+        <mesh key={i} geometry={g.handle} material={IM.softBeige} position={p.position} quaternion={p.quaternion} />
       ))}
     </group>
   )

@@ -233,6 +233,33 @@ function WiperCard() {
   )
 }
 
+function RearWiperCard() {
+  const { triggerAnimation, rearWiperSpeed, setRearWiperSpeed } = useCarState()
+  const rearWiperOn = useCarState(s => s.animationStates.wiper_rear)
+  const [reverseWipe, setReverseWipe] = useState(true)
+  const [defog, setDefog] = useState(false)
+  const washTimer = useRef(null)
+  useEffect(() => () => clearTimeout(washTimer.current), [])
+
+  return (
+    <div>
+      <Toggle label="Rear Wiper" value={rearWiperOn} onChange={() => triggerAnimation('wiper_rear', !rearWiperOn)}
+        sub={rearWiperOn ? 'Actively sweeping' : 'Parked'} />
+      <ButtonGroup label="Rear Speed" options={[{label:'Int',value:'int'},{label:'Low',value:'low'},{label:'High',value:'high'}]}
+        value={rearWiperSpeed} onChange={setRearWiperSpeed} />
+      <Toggle label="Auto Wipe in Reverse" value={reverseWipe} onChange={setReverseWipe} sub="Sweeps once when reverse is engaged with front wipers on" />
+      <Toggle label="Rear Defogger" value={defog} onChange={setDefog} sub={defog ? 'Heating — auto off in 15 min' : 'Off'} />
+      <div className="pt-2">
+        <ActionBtn label="Wash & Wipe (rear)" variant="primary" onClick={() => {
+          clearTimeout(washTimer.current)
+          triggerAnimation('wiper_rear', true)
+          washTimer.current = setTimeout(() => triggerAnimation('wiper_rear', false), 2400)
+        }} />
+      </div>
+    </div>
+  )
+}
+
 function MirrorCard({ hotspot }) {
   const { triggerAnimation, nudgeMirrorTilt } = useCarState()
   const fold = useCarState(s => s.animationStates[hotspot])
@@ -841,6 +868,7 @@ const CARD_MAP = {
   headlight:     HeadlightCard,
   adas:          AdasCard,
   wiper:         WiperCard,
+  rear_wiper:    RearWiperCard,
   mirror_left:   (p) => <MirrorCard {...p} hotspot="mirror_left" />,
   mirror_right:  (p) => <MirrorCard {...p} hotspot="mirror_right" />,
   bumper:        BumperCard,

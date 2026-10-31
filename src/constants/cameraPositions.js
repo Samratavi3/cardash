@@ -11,6 +11,7 @@ export const CAMERA_POSITIONS = {
   headlight: { position: [2.5, 1.05, 4.3], target: [0.62, 0.7, 2.12], fov: 28 },
   adas: { position: [0.7, 1.95, 2.5], target: [0, 1.4, 0.14], fov: 26 },
   wiper: { position: [1.5, 2.5, 3.3], target: [-0.1, 1.06, 0.88], fov: 32 },
+  rear_wiper: { position: [1.2, 2.3, -4.5], target: [0.05, 1.17, -1.3], fov: 30 },
   mirror_left: { position: [2.9, 1.4, 2.6], target: [0.98, 1.0, 0.6], fov: 26 },
   mirror_right: { position: [-2.9, 1.4, 2.6], target: [-0.98, 1.0, 0.6], fov: 26 },
   // Behind-the-mirror views so glass tilt is visible while using the D-pad
