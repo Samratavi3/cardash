@@ -484,7 +484,8 @@ export default function InteriorModel() {
       <FrontSeat name="seat_passenger" x={-CABIN.driverX} stateKey="seatPassenger" />
       <RearBench />
       <RoofHardware day={isDayMode} />
-      {/* Clickable ambient strip on the passenger side of the dash */}
+      {/* Clickable ambient strip on the driver (−X) side of the dash; the
+          passenger-side one lives in <Dashboard> */}
       <InteriorMesh name="ambient_strip" position={[0, 0.925, 0.598]}>
         <mesh material={IM.ambient} position={[-0.42, 0, 0]}>
           <boxGeometry args={[0.5, 0.005, 0.005]} />

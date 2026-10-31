@@ -1,4 +1,3 @@
-import { useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Sun, Moon, RotateCcw, Camera, FileText, ArrowLeftRight, Monitor, Scan, Crosshair
@@ -205,8 +204,10 @@ function CanvasToolbar() {
         aria-label={isAutoRotate ? 'Disable auto-rotate' : 'Enable auto-rotate'}
         aria-pressed={isAutoRotate}
       >
+        {/* animate-spin (not an inline `animation`) so Tailwind emits @keyframes spin */}
         <RotateCcw size={14} color={isAutoRotate ? '#00d4ff' : 'rgba(255,255,255,0.6)'}
-          style={isAutoRotate ? { filter: 'drop-shadow(0 0 4px #00d4ff)', animation: 'spin 2s linear infinite' } : {}} />
+          className={isAutoRotate ? 'animate-spin' : undefined}
+          style={isAutoRotate ? { filter: 'drop-shadow(0 0 4px #00d4ff)', animationDuration: '2s' } : {}} />
       </button>
 
       <button

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import { Activity, Wifi, Navigation, ShieldCheck, Thermometer, Fuel } from 'lucide-react'
 import { useCarState } from '../hooks/useCarState'
@@ -9,8 +9,10 @@ const R = 78, CX = 100, CY = 100
 const CIRC = 2 * Math.PI * R
 const SWEEP_LEN = (240 / 360) * CIRC
 
+// Angles use SVG's convention (0° = 3 o'clock, clockwise) so ticks, labels
+// and needle line up with the rotate(150)-ed dash arcs below.
 function polarToXY(angleDeg, radius = R) {
-  const rad = ((angleDeg - 90) * Math.PI) / 180
+  const rad = (angleDeg * Math.PI) / 180
   return { x: CX + radius * Math.cos(rad), y: CY + radius * Math.sin(rad) }
 }
 
@@ -85,7 +87,7 @@ function Speedometer({ speed, size = 220, unit = 'kmh' }) {
           transformOrigin: `${CX}px ${CY}px`,
           transition: 'transform 0.3s cubic-bezier(.34,1.2,.64,1)',
         }}>
-          <line x1={CX} y1={CY} x2={CX} y2={CY - 62}
+          <line x1={CX} y1={CY} x2={CX + 62} y2={CY}
             stroke="#ffffff" strokeWidth="1.5" strokeLinecap="round"
             style={{ filter: 'drop-shadow(0 0 4px rgba(255,255,255,0.8))' }} />
         </g>

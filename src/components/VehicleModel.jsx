@@ -453,7 +453,9 @@ export default function VehicleModel() {
     // roof skin, then slide back between roof and headliner. It stays dropped
     // until it is fully forward again so it never cuts through the roof.
     const sliding = A.sunroof === 2 || a.slide > 0.015
-    easing.damp(a, 'tilt', A.sunroof === 1 ? 0.075 : 0, 0.3, dt)
+    // Open → Tilt: wait until the panel is back under its opening, or the
+    // raised rear edge would cut through the roof skin while it slides home
+    easing.damp(a, 'tilt', A.sunroof === 1 && !sliding ? 0.075 : 0, 0.3, dt)
     easing.damp(a, 'lift', sliding ? -0.026 : 0, 0.12, dt)
     easing.damp(a, 'slide', A.sunroof === 2 && a.lift < -0.02 ? 0.31 : 0, 0.55, dt) // rear edge stops at the roof's end
     const sun = refs.sun.current

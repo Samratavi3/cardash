@@ -130,7 +130,9 @@ function HeadlightCard() {
   // Derived from the live light mode — survives card close/reopen
   const drl      = headlightMode === 'drl'
   const highBeam = headlightMode === 'high'
-  const priorModeRef = useRef('off')
+  // Mode to restore when high beam goes off. The card may be reopened while
+  // already on 'high', so fall back to DRLs (on with the ignition), not 'off'.
+  const priorModeRef = useRef('drl')
   const [auto, setAuto] = useState(true)
   const [adaptive, setAdaptive] = useState(true)
   const [projector, setProjector] = useState('sport')
@@ -252,8 +254,9 @@ function MirrorCard({ hotspot }) {
   const handleDPad = (dir) => {
     // Glass adjustment is judged from the driver's seat — move inside on first nudge
     flyTo(`${hotspot}_adjust`)
-    if (dir === 'up')    nudgeMirrorTilt(side, 'x', -STEP)
-    if (dir === 'down')  nudgeMirrorTilt(side, 'x',  STEP)
+    // +x pitches the rear-facing glass so its normal tilts upward
+    if (dir === 'up')    nudgeMirrorTilt(side, 'x',  STEP)
+    if (dir === 'down')  nudgeMirrorTilt(side, 'x', -STEP)
     if (dir === 'left')  nudgeMirrorTilt(side, 'y', isLeft ? -STEP :  STEP)
     if (dir === 'right') nudgeMirrorTilt(side, 'y', isLeft ?  STEP : -STEP)
   }

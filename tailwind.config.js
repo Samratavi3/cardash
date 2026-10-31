@@ -6,6 +6,11 @@ export default {
       fontFamily: {
         sans: ['Inter', 'system-ui', 'sans-serif'],
       },
+      // Fine glass-UI steps (bg-white/8, hover:bg-white/14 …). Without these the
+      // colour-opacity modifiers are off the default scale and emit no CSS.
+      opacity: {
+        3: '0.03', 4: '0.04', 6: '0.06', 7: '0.07', 8: '0.08', 12: '0.12', 14: '0.14', 18: '0.18',
+      },
       animation: {
         'spin-slow': 'spin 3s linear infinite',
         'pulse-slow': 'pulse 3s ease-in-out infinite',

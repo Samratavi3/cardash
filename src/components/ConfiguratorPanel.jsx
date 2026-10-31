@@ -144,7 +144,8 @@ export default function ConfiguratorPanel() {
                           )}
                         </div>
                         <span className="text-[8px] text-white/40 group-hover:text-white/70 transition-colors text-center leading-tight max-w-[48px] truncate">
-                          {c.name.split(' ').slice(-1)[0]}
+                          {/* first word — the last is just "Pearl"/"Metallic" on every swatch */}
+                          {c.name.split(' ')[0]}
                         </span>
                       </button>
                     ))}
